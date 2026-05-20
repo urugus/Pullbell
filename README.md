@@ -81,6 +81,29 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
+## Release
+
+Releases are created from version tags.
+
+1. Update `Cargo.toml` and `CHANGELOG.md` for the new version.
+2. Commit the release changes.
+3. Create and push a tag that matches the Cargo version:
+
+```sh
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
+```
+
+The release workflow verifies formatting, linting, tests, and the tag/Cargo
+version match. It then publishes unsigned macOS archives for:
+
+- `aarch64-apple-darwin` for Apple Silicon Macs.
+- `x86_64-apple-darwin` for Intel Macs.
+
+Each GitHub Release includes a `checksums.txt` file with SHA-256 hashes for the
+archives. Signed `.app` bundles and auto-update support are still planned for a
+later packaging phase.
+
 ## Implementation plan
 
 Completed MVP:
