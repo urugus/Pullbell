@@ -18,6 +18,7 @@ use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(300);
+const DEFAULT_CLIENT_ID: Option<&str> = option_env!("PULLBELL_DEFAULT_CLIENT_ID");
 
 #[derive(Debug, Clone)]
 enum AppEvent {
@@ -434,5 +435,11 @@ fn load_client_id() -> Option<String> {
                 .ok()
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
+        })
+        .or_else(|| {
+            DEFAULT_CLIENT_ID
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
         })
 }
