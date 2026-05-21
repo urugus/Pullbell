@@ -65,22 +65,23 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build release binary
+        env:
+          PULLBELL_DEFAULT_CLIENT_ID: ${{ secrets.PULLBELL_DEFAULT_CLIENT_ID }}
         run: cargo build --release --locked --target "${{ matrix.target }}"
 
-      - name: Package
+      - name: Package app bundle
         run: |
           version="${GITHUB_REF_NAME#v}"
           package="pullbell-${version}-${{ matrix.target }}"
           mkdir -p "dist/$package"
-          cp "target/${{ matrix.target }}/release/pullbell" "dist/$package/"
-          cp README.md LICENSE "dist/$package/"
-          tar -czf "dist/$package.tar.gz" -C dist "$package"
+          scripts/package-macos-app.sh "target/${{ matrix.target }}/release/pullbell" "dist/$package" "$version"
+          ditto --norsrc -c -k --keepParent "dist/$package/Pullbell.app" "dist/$package.zip"
 
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
           name: pullbell-${{ matrix.target }}
-          path: dist/*.tar.gz
+          path: dist/*.zip
           if-no-files-found: error
 
   publish:
@@ -100,9 +101,75 @@ jobs:
       - name: Generate checksums
         run: |
           cd dist
-          sha256sum *.tar.gz > checksums.txt
+          sha256sum *.zip > checksums.txt
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist/*.tar.gz dist/checksums.txt --generate-notes --repo "${GITHUB_REPOSITORY}"
+        run: gh release create "${GITHUB_REF_NAME}" dist/*.zip dist/checksums.txt --generate-notes --repo "${GITHUB_REPOSITORY}"
+
+  homebrew:
+    name: Update Homebrew Cask
+    needs: publish
+    runs-on: ubuntu-latest
+    env:
+      HOMEBREW_TAP_REPOSITORY: ${{ vars.HOMEBREW_TAP_REPOSITORY || 'urugus/homebrew-tap' }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          path: source
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Read release checksums
+        id: checksums
+        working-directory: dist
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          arm64_package="pullbell-${version}-aarch64-apple-darwin.zip"
+          x86_64_package="pullbell-${version}-x86_64-apple-darwin.zip"
+
+          arm64_sha256="$(sha256sum "$arm64_package" | cut -d ' ' -f 1)"
+          x86_64_sha256="$(sha256sum "$x86_64_package" | cut -d ' ' -f 1)"
+
+          {
+            echo "version=$version"
+            echo "arm64_sha256=$arm64_sha256"
+            echo "x86_64_sha256=$x86_64_sha256"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.HOMEBREW_TAP_REPOSITORY }}
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update cask
+        run: |
+          source/scripts/generate-homebrew-cask.sh \
+            "${{ steps.checksums.outputs.version }}" \
+            "${{ steps.checksums.outputs.arm64_sha256 }}" \
+            "${{ steps.checksums.outputs.x86_64_sha256 }}" \
+            homebrew-tap/Casks/pullbell.rb
+
+      - name: Commit cask update
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [ -z "$(git status --porcelain -- Casks/pullbell.rb)" ]; then
+            echo "Homebrew Cask is already up to date."
+            exit 0
+          fi
+
+          git add Casks/pullbell.rb
+          git commit -m "Update Pullbell to ${{ steps.checksums.outputs.version }}"
+          git push

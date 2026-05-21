@@ -30,9 +30,32 @@ Tauri was intentionally not used for the MVP because the first usable version
 does not need a full WebView UI. A richer PR preview window can be added later
 without changing the GitHub/OAuth core modules.
 
+## Install
+
+Install with Homebrew:
+
+```sh
+brew install --cask urugus/tap/pullbell
+```
+
+You can also download the latest `pullbell-*-apple-darwin.zip` archive from
+[GitHub Releases](https://github.com/urugus/Pullbell/releases), unzip it, and
+move `Pullbell.app` to `/Applications`.
+
+Pullbell runs as a menu bar app. Open `Pullbell.app`, click the `PR` menu bar
+item, then choose `Sign in with GitHub`.
+
+The unsigned release builds may require approval in macOS Privacy &
+Security settings the first time you open them. Signed and notarized builds are
+planned for the next packaging step.
+
 ## GitHub OAuth setup
 
-Create a GitHub OAuth App and enable Device Flow.
+Release builds can include Pullbell's GitHub OAuth client ID at compile time.
+When that is configured, users do not need to create their own GitHub OAuth App.
+
+For local development or custom builds, create a GitHub OAuth App and enable
+Device Flow.
 
 Recommended development setup:
 
@@ -52,6 +75,12 @@ You can also launch from a shell with:
 PULLBELL_CLIENT_ID=YOUR_GITHUB_OAUTH_CLIENT_ID cargo run
 ```
 
+Release builds can embed a default client ID with:
+
+```sh
+PULLBELL_DEFAULT_CLIENT_ID=YOUR_GITHUB_OAUTH_CLIENT_ID cargo build --release
+```
+
 Requested scopes:
 
 - `repo`: needed for private org repositories.
@@ -64,7 +93,7 @@ GitHub documents the OAuth Device Flow, OAuth scopes, and notifications API in:
 - [Scopes for OAuth apps](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps)
 - [REST API notifications](https://docs.github.com/en/rest/activity/notifications?apiVersion=2022-11-28)
 
-## Run
+## Run From Source
 
 ```sh
 cargo run
@@ -95,13 +124,26 @@ git push origin v0.1.0
 ```
 
 The release workflow verifies formatting, linting, tests, and the tag/Cargo
-version match. It then publishes unsigned macOS archives for:
+version match. It then publishes unsigned macOS app archives for:
 
 - `aarch64-apple-darwin` for Apple Silicon Macs.
 - `x86_64-apple-darwin` for Intel Macs.
 
 Each GitHub Release includes a `checksums.txt` file with SHA-256 hashes for the
-archives. Signed `.app` bundles and auto-update support are still planned for a
+archives. After the GitHub Release is published, the workflow updates the
+Homebrew Cask in `urugus/homebrew-tap` so users can install the new version with
+`brew install --cask urugus/tap/pullbell`.
+
+The Homebrew update requires these repository settings:
+
+- Secret `PULLBELL_DEFAULT_CLIENT_ID`: GitHub OAuth App client ID embedded in
+  release builds.
+- Secret `HOMEBREW_TAP_TOKEN`: token with write access to the Homebrew tap
+  repository.
+- Optional variable `HOMEBREW_TAP_REPOSITORY`: tap repository override. Defaults
+  to `urugus/homebrew-tap`.
+
+Signed and notarized builds and auto-update support are still planned for a
 later packaging phase.
 
 ## Implementation plan
@@ -119,4 +161,4 @@ Next phases:
 - Add an in-app preview window for PR/comment bodies.
 - Add user-configurable polling interval and repo/org filters.
 - Add support for marking notification threads as done/read.
-- Package as a signed `.app` bundle with auto-update support.
+- Package as a signed and notarized `.app` bundle with auto-update support.
