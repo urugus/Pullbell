@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/pullbell-logo.svg" alt="Pullbell logo" width="640">
+</p>
+
 # Pullbell
 
 Pullbell is a Rust macOS menu bar app for pull request notifications.
