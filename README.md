@@ -45,7 +45,7 @@ move `Pullbell.app` to `/Applications`.
 Pullbell runs as a menu bar app. Open `Pullbell.app`, click the `PR` menu bar
 item, then choose `Sign in with GitHub`.
 
-The unsigned development builds may require approval in macOS Privacy &
+The unsigned release builds may require approval in macOS Privacy &
 Security settings the first time you open them. Signed and notarized builds are
 planned for the next packaging step.
 
