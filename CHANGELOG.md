@@ -12,7 +12,8 @@ format and must match the version in `Cargo.toml`.
 ## 0.4.0
 
 - Preserve the OAuth configuration error in the menu when sign-in cannot start.
-- Fail release builds when the embedded GitHub OAuth client ID secret is missing.
+- Embed Pullbell's GitHub OAuth client ID so release builds can start sign-in
+  without a repository secret or local client ID file.
 - Refactored pull request notification tracking into a dedicated module.
 - Added unit coverage for notification bootstrap, reset, and actionable item
   detection behavior.

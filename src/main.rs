@@ -24,7 +24,7 @@ use notifications::NotificationTracker;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(300);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60 * 12);
-const DEFAULT_CLIENT_ID: Option<&str> = option_env!("PULLBELL_DEFAULT_CLIENT_ID");
+const DEFAULT_CLIENT_ID: &str = "Ov23liYs8QgtSc19mkZs";
 
 #[derive(Debug, Clone)]
 enum AppEvent {
@@ -387,9 +387,7 @@ fn load_client_id() -> Option<String> {
                 .filter(|value| !value.is_empty())
         })
         .or_else(|| {
-            DEFAULT_CLIENT_ID
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
+            let client_id = DEFAULT_CLIENT_ID.trim();
+            (!client_id.is_empty()).then(|| client_id.to_string())
         })
 }

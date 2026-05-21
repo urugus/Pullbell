@@ -73,11 +73,11 @@ scripts/sign-macos-app.sh /path/to/Pullbell.app -
 
 ## GitHub OAuth setup
 
-Release builds can include Pullbell's GitHub OAuth client ID at compile time.
-When that is configured, users do not need to create their own GitHub OAuth App.
+Release builds include Pullbell's GitHub OAuth client ID, so users do not need
+to create their own GitHub OAuth App.
 
 For local development or custom builds, create a GitHub OAuth App and enable
-Device Flow.
+Device Flow if you want to use a different OAuth app.
 
 Recommended development setup:
 
@@ -95,12 +95,6 @@ You can also launch from a shell with:
 
 ```sh
 PULLBELL_CLIENT_ID=YOUR_GITHUB_OAUTH_CLIENT_ID cargo run
-```
-
-Release builds embed a default client ID with:
-
-```sh
-PULLBELL_DEFAULT_CLIENT_ID=YOUR_GITHUB_OAUTH_CLIENT_ID cargo build --release
 ```
 
 Requested scopes:
@@ -158,8 +152,6 @@ Homebrew Cask in `urugus/homebrew-tap` so users can install the new version with
 
 The release workflow requires these repository settings:
 
-- Secret `PULLBELL_DEFAULT_CLIENT_ID`: GitHub OAuth App client ID embedded in
-  release builds. Release builds fail when this secret is missing.
 - Secret `HOMEBREW_TAP_TOKEN`: token with write access to the Homebrew tap
   repository.
 - Optional variable `HOMEBREW_TAP_REPOSITORY`: tap repository override. Defaults
