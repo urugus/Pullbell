@@ -109,7 +109,7 @@ jobs:
         run: gh release create "${GITHUB_REF_NAME}" dist/*.zip dist/checksums.txt --generate-notes --repo "${GITHUB_REPOSITORY}"
 
   homebrew:
-    name: Update Homebrew Cask
+    name: Update Homebrew Tap
     needs: publish
     runs-on: ubuntu-latest
     env:
@@ -144,6 +144,16 @@ jobs:
             echo "x86_64_sha256=$x86_64_sha256"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Read source archive checksum
+        id: source
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          archive="pullbell-${version}.tar.gz"
+          curl -L --fail "https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz" -o "$archive"
+          source_sha256="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+
+          echo "sha256=$source_sha256" >> "$GITHUB_OUTPUT"
+
       - name: Checkout Homebrew tap
         uses: actions/checkout@v4
         with:
@@ -159,17 +169,24 @@ jobs:
             "${{ steps.checksums.outputs.x86_64_sha256 }}" \
             homebrew-tap/Casks/pullbell.rb
 
-      - name: Commit cask update
+      - name: Update formula
+        run: |
+          source/scripts/generate-homebrew-formula.sh \
+            "${{ steps.checksums.outputs.version }}" \
+            "${{ steps.source.outputs.sha256 }}" \
+            homebrew-tap/Formula/pullbell.rb
+
+      - name: Commit Homebrew update
         working-directory: homebrew-tap
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          if [ -z "$(git status --porcelain -- Casks/pullbell.rb)" ]; then
-            echo "Homebrew Cask is already up to date."
+          if [ -z "$(git status --porcelain -- Casks/pullbell.rb Formula/pullbell.rb)" ]; then
+            echo "Homebrew tap is already up to date."
             exit 0
           fi
 
-          git add Casks/pullbell.rb
+          git add Casks/pullbell.rb Formula/pullbell.rb
           git commit -m "Update Pullbell to ${{ steps.checksums.outputs.version }}"
           git push

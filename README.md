@@ -35,6 +35,18 @@ without changing the GitHub/OAuth core modules.
 Install with Homebrew:
 
 ```sh
+brew install urugus/tap/pullbell
+pullbell
+```
+
+This Formula builds Pullbell locally from source and installs a small launcher
+that opens the menu bar app. Because Formula builds do not embed Pullbell's
+release OAuth client ID, you may need to configure a local GitHub OAuth App
+client ID before signing in. See [GitHub OAuth setup](#github-oauth-setup).
+
+An unsigned prebuilt app bundle is also available as a Homebrew Cask:
+
+```sh
 brew install --cask urugus/tap/pullbell
 ```
 
@@ -42,12 +54,12 @@ You can also download the latest `pullbell-*-apple-darwin.zip` archive from
 [GitHub Releases](https://github.com/urugus/Pullbell/releases), unzip it, and
 move `Pullbell.app` to `/Applications`.
 
-Pullbell runs as a menu bar app. Open `Pullbell.app`, click the `PR` menu bar
-item, then choose `Sign in with GitHub`.
+Pullbell runs as a menu bar app. Open Pullbell, click the `PR` menu bar item,
+then choose `Sign in with GitHub`.
 
-The unsigned release builds may require approval in macOS Privacy &
-Security settings the first time you open them. Signed and notarized builds are
-planned for the next packaging step.
+The unsigned Cask and GitHub Release builds may require approval in macOS
+Privacy & Security settings the first time you open them. Signed and notarized
+builds are planned for a later packaging step.
 
 ## GitHub OAuth setup
 
@@ -131,8 +143,18 @@ version match. It then publishes unsigned macOS app archives for:
 
 Each GitHub Release includes a `checksums.txt` file with SHA-256 hashes for the
 archives. After the GitHub Release is published, the workflow updates the
-Homebrew Cask in `urugus/homebrew-tap` so users can install the new version with
-`brew install --cask urugus/tap/pullbell`.
+Homebrew Formula and Cask in `urugus/homebrew-tap`. The Formula is the default
+free install path:
+
+```sh
+brew install urugus/tap/pullbell
+```
+
+The Cask remains available for unsigned prebuilt app bundle testing:
+
+```sh
+brew install --cask urugus/tap/pullbell
+```
 
 The Homebrew update requires these repository settings:
 

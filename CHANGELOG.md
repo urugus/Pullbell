@@ -7,7 +7,10 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
-- Nothing yet.
+- Added Homebrew Formula generation so users can install Pullbell by building
+  locally from source with `brew install urugus/tap/pullbell`.
+- Updated release automation to publish both the Homebrew Formula and Cask to
+  the tap.
 
 ## 0.2.0
 
