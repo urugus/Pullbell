@@ -284,37 +284,33 @@ async fn refresh(
     };
 
     let client = GitHubClient::new(token);
-    let viewer = client.viewer().await;
-    let pull_requests = client.pull_requests().await;
-
-    match (viewer, pull_requests) {
-        (Ok(viewer), Ok(items)) => {
-            for item in &items {
-                if *bootstrapped
-                    && !known_ids.contains(&item.id)
-                    && matches!(item.kind, PrKind::ReviewRequested | PrKind::Notification)
-                {
-                    let _ = proxy.send_event(AppEvent::Notify(item.clone()));
+    match client.viewer().await {
+        Ok(viewer) => match client.pull_requests_for(&viewer.login).await {
+            Ok(items) => {
+                for item in &items {
+                    if *bootstrapped
+                        && !known_ids.contains(&item.id)
+                        && matches!(item.kind, PrKind::ReviewRequested | PrKind::Notification)
+                    {
+                        let _ = proxy.send_event(AppEvent::Notify(item.clone()));
+                    }
                 }
+
+                known_ids.clear();
+                known_ids.extend(items.iter().map(|item| item.id.clone()));
+                *bootstrapped = true;
+
+                let mut guard = state.lock().expect("state lock");
+                guard.signed_in_as = Some(viewer.login);
+                guard.token_loaded = true;
+                guard.is_refreshing = false;
+                guard.last_refreshed_at = Some(Utc::now());
+                guard.last_error = None;
+                guard.pull_requests = items;
             }
-
-            known_ids.clear();
-            known_ids.extend(items.iter().map(|item| item.id.clone()));
-            *bootstrapped = true;
-
-            let mut guard = state.lock().expect("state lock");
-            guard.signed_in_as = Some(viewer.login);
-            guard.token_loaded = true;
-            guard.is_refreshing = false;
-            guard.last_refreshed_at = Some(Utc::now());
-            guard.last_error = None;
-            guard.pull_requests = items;
-        }
-        (Err(error), _) | (_, Err(error)) => {
-            let mut guard = state.lock().expect("state lock");
-            guard.is_refreshing = false;
-            guard.last_error = Some(format!("{error:#}"));
-        }
+            Err(error) => set_error(state, format!("{error:#}")),
+        },
+        Err(error) => set_error(state, format!("{error:#}")),
     }
 
     let _ = proxy.send_event(AppEvent::StateChanged);
