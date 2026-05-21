@@ -53,9 +53,23 @@ Pullbell checks GitHub Releases for newer versions and shows an update notice in
 the menu when a release is available. Homebrew cask installs also get an
 `Update with Homebrew` menu action that starts the cask upgrade in Terminal.
 
-The unsigned release builds may require approval in macOS Privacy &
-Security settings the first time you open them. Signed and notarized builds are
-planned for the next packaging step.
+Release builds are ad-hoc signed so the app bundle has a valid local code
+signature without requiring a paid Apple Developer Program membership. Because
+the builds are not notarized, macOS may still require manual approval the first
+time you open the app.
+
+If macOS reports that `Pullbell` is damaged, remove the quarantine attribute
+from that local build and open it again:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Pullbell.app
+```
+
+For local development bundles, you can also ad-hoc sign the generated app:
+
+```sh
+scripts/sign-macos-app.sh /path/to/Pullbell.app -
+```
 
 ## GitHub OAuth setup
 
@@ -83,7 +97,7 @@ You can also launch from a shell with:
 PULLBELL_CLIENT_ID=YOUR_GITHUB_OAUTH_CLIENT_ID cargo run
 ```
 
-Release builds can embed a default client ID with:
+Release builds embed a default client ID with:
 
 ```sh
 PULLBELL_DEFAULT_CLIENT_ID=YOUR_GITHUB_OAUTH_CLIENT_ID cargo build --release
@@ -132,7 +146,7 @@ git push origin v0.1.0
 ```
 
 The release workflow verifies formatting, linting, tests, and the tag/Cargo
-version match. It then publishes unsigned macOS app archives for:
+version match. It then publishes ad-hoc signed macOS app archives for:
 
 - `aarch64-apple-darwin` for Apple Silicon Macs.
 - `x86_64-apple-darwin` for Intel Macs.
@@ -150,9 +164,6 @@ The Homebrew update requires these repository settings:
   repository.
 - Optional variable `HOMEBREW_TAP_REPOSITORY`: tap repository override. Defaults
   to `urugus/homebrew-tap`.
-
-Signed and notarized builds and full in-app self-update support are still
-planned for a later packaging phase.
 
 ## Implementation plan
 
