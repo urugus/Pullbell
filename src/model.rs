@@ -43,6 +43,12 @@ impl PullRequestItem {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AvailableUpdate {
+    pub latest_version: String,
+    pub release_url: String,
+}
+
 pub fn merge_pr_items(items: Vec<PullRequestItem>) -> Vec<PullRequestItem> {
     let mut by_id: BTreeMap<String, PullRequestItem> = BTreeMap::new();
 

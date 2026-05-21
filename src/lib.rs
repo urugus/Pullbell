@@ -3,3 +3,4 @@ pub mod github;
 pub mod model;
 pub mod state;
 pub mod storage;
+pub mod updater;
