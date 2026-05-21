@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/pullbell-logo.svg" alt="Pullbell logo" width="640">
+</p>
+
 # Pullbell
 
 Pullbell is a Rust macOS menu bar app for pull request notifications.
@@ -56,6 +60,10 @@ move `Pullbell.app` to `/Applications`.
 
 Pullbell runs as a menu bar app. Open Pullbell, click the `PR` menu bar item,
 then choose `Sign in with GitHub`.
+
+Pullbell checks GitHub Releases for newer versions and shows an update notice in
+the menu when a release is available. Homebrew cask installs also get an
+`Update with Homebrew` menu action that starts the cask upgrade in Terminal.
 
 The unsigned Cask and GitHub Release builds may require approval in macOS
 Privacy & Security settings the first time you open them. Signed and notarized
@@ -165,8 +173,8 @@ The Homebrew update requires these repository settings:
 - Optional variable `HOMEBREW_TAP_REPOSITORY`: tap repository override. Defaults
   to `urugus/homebrew-tap`.
 
-Signed and notarized builds and auto-update support are still planned for a
-later packaging phase.
+Signed and notarized builds and full in-app self-update support are still
+planned for a later packaging phase.
 
 ## Implementation plan
 

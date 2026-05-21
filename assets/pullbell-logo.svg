@@ -1,0 +1,26 @@
+<svg width="1080" height="320" viewBox="0 0 1080 320" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Pullbell logo</title>
+  <desc id="desc">Pullbell wordmark with a minimal bell, pull request branch, download arrow, and red notification dot.</desc>
+  <rect width="1080" height="320" fill="#F7F6F0"/>
+
+  <g transform="translate(34 18) scale(0.56)">
+    <path d="M256 380V430" stroke="#444742" stroke-width="25" stroke-linecap="round"/>
+    <path d="M207 420C218 446 235 459 256 459C277 459 294 446 305 420" stroke="#444742" stroke-width="25" stroke-linecap="round"/>
+
+    <path d="M120 337C162 317 174 285 174 232C174 172 209 130 241 124V91C241 69 253 56 256 56C259 56 271 69 271 91V124C291 128 310 139 325 155" stroke="#444742" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M350 201C356 218 358 238 358 262C358 301 370 322 392 337" stroke="#444742" stroke-width="25" stroke-linecap="round"/>
+    <path d="M120 337C92 350 87 400 128 400H384C425 400 420 350 392 337" stroke="#444742" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <path d="M224 210V298" stroke="#444742" stroke-width="24" stroke-linecap="round"/>
+    <path d="M190 298H258L224 352L190 298Z" fill="#444742"/>
+    <circle cx="224" cy="176" r="22" fill="#F7F6F0" stroke="#444742" stroke-width="20"/>
+    <path d="M246 184C264 184 263 207 283 207" stroke="#444742" stroke-width="20" stroke-linecap="round"/>
+    <circle cx="300" cy="221" r="20" fill="#F7F6F0" stroke="#444742" stroke-width="20"/>
+
+    <circle cx="358" cy="167" r="36" fill="#F03D3E"/>
+    <circle cx="358" cy="167" r="36" stroke="#F7F6F0" stroke-width="10"/>
+  </g>
+
+  <text x="338" y="150" fill="#242623" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="84" font-weight="760" letter-spacing="0">Pullbell</text>
+  <text x="342" y="203" fill="#5F625D" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="28" font-weight="520" letter-spacing="0">GitHub pull request notifications for your menu bar</text>
+</svg>

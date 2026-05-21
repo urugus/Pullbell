@@ -6,6 +6,7 @@ use pullbell::github::GitHubClient;
 use pullbell::model::{PrKind, PullRequestItem};
 use pullbell::state::AppState;
 use pullbell::storage;
+use pullbell::updater;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::sync::{Arc, Mutex};
@@ -18,6 +19,7 @@ use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(300);
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60 * 12);
 const DEFAULT_CLIENT_ID: Option<&str> = option_env!("PULLBELL_DEFAULT_CLIENT_ID");
 
 #[derive(Debug, Clone)]
@@ -30,6 +32,8 @@ enum AppEvent {
 enum AppCommand {
     SignIn,
     Refresh,
+    CheckForUpdates,
+    UpdateWithHomebrew,
     SignOut,
     OpenUrl(String),
     Quit,
@@ -116,11 +120,15 @@ async fn run_worker(
     let mut known_ids = HashSet::new();
     let mut bootstrapped = false;
     let mut poll = tokio::time::interval(POLL_INTERVAL);
+    let mut update_poll = tokio::time::interval(UPDATE_CHECK_INTERVAL);
 
     loop {
         tokio::select! {
             _ = poll.tick() => {
                 refresh(&state, &proxy, &mut known_ids, &mut bootstrapped).await;
+            }
+            _ = update_poll.tick() => {
+                spawn_update_check(&state, &proxy, false);
             }
             Some(command) = command_rx.recv() => {
                 match command {
@@ -131,12 +139,25 @@ async fn run_worker(
                     AppCommand::Refresh => {
                         refresh(&state, &proxy, &mut known_ids, &mut bootstrapped).await;
                     }
+                    AppCommand::CheckForUpdates => {
+                        spawn_update_check(&state, &proxy, true);
+                    }
+                    AppCommand::UpdateWithHomebrew => {
+                        start_homebrew_update(&state, &proxy);
+                    }
                     AppCommand::SignOut => {
                         if let Err(error) = storage::delete_token() {
                             set_error(&state, format!("{error:#}"));
                         }
+                        let homebrew_cask_installed = {
+                            state
+                                .lock()
+                                .expect("state lock")
+                                .homebrew_cask_installed
+                        };
                         let mut guard = state.lock().expect("state lock");
                         *guard = AppState::default();
+                        guard.homebrew_cask_installed = homebrew_cask_installed;
                         known_ids.clear();
                         bootstrapped = false;
                         let _ = proxy.send_event(AppEvent::StateChanged);
@@ -147,6 +168,35 @@ async fn run_worker(
             }
         }
     }
+}
+
+fn spawn_update_check(
+    state: &Arc<Mutex<AppState>>,
+    proxy: &EventLoopProxy<AppEvent>,
+    show_status: bool,
+) {
+    {
+        let mut guard = state.lock().expect("state lock");
+        if guard.is_checking_updates {
+            if show_status {
+                guard.update_status = Some("Update check already in progress".to_string());
+            }
+            let _ = proxy.send_event(AppEvent::StateChanged);
+            return;
+        }
+
+        guard.is_checking_updates = true;
+        if show_status {
+            guard.update_status = None;
+        }
+    }
+    let _ = proxy.send_event(AppEvent::StateChanged);
+
+    let state = Arc::clone(state);
+    let proxy = proxy.clone();
+    tokio::spawn(async move {
+        check_for_updates(&state, &proxy, show_status).await;
+    });
 }
 
 async fn sign_in(
@@ -270,6 +320,55 @@ async fn refresh(
     let _ = proxy.send_event(AppEvent::StateChanged);
 }
 
+async fn check_for_updates(
+    state: &Arc<Mutex<AppState>>,
+    proxy: &EventLoopProxy<AppEvent>,
+    show_status: bool,
+) {
+    let homebrew_cask_installed = tokio::task::spawn_blocking(updater::is_homebrew_cask_installed);
+    let result = updater::check_latest_release(env!("CARGO_PKG_VERSION")).await;
+    let homebrew_cask_installed = homebrew_cask_installed.await.unwrap_or(false);
+
+    let mut guard = state.lock().expect("state lock");
+    guard.is_checking_updates = false;
+    guard.homebrew_cask_installed = homebrew_cask_installed;
+    guard.last_update_checked_at = Some(Utc::now());
+
+    match result {
+        Ok(update) => {
+            guard.available_update = update;
+            if guard.available_update.is_some() {
+                guard.update_status = None;
+            } else if show_status {
+                guard.update_status = Some("Pullbell is up to date".to_string());
+            }
+        }
+        Err(error) => {
+            if show_status {
+                guard.available_update = None;
+                guard.update_status = Some(format!("Update check failed: {error:#}"));
+            }
+        }
+    }
+
+    let _ = proxy.send_event(AppEvent::StateChanged);
+}
+
+fn start_homebrew_update(state: &Arc<Mutex<AppState>>, proxy: &EventLoopProxy<AppEvent>) {
+    match updater::start_homebrew_update() {
+        Ok(()) => {
+            state.lock().expect("state lock").update_status =
+                Some("Homebrew update started in Terminal".to_string());
+        }
+        Err(error) => {
+            state.lock().expect("state lock").update_status =
+                Some(format!("Homebrew update could not start: {error:#}"));
+        }
+    }
+
+    let _ = proxy.send_event(AppEvent::StateChanged);
+}
+
 fn rebuild_menu(
     tray: &mut TrayIcon,
     state: &Arc<Mutex<AppState>>,
@@ -281,6 +380,7 @@ fn rebuild_menu(
     let mut commands = HashMap::new();
 
     append_disabled(&menu, "Pullbell")?;
+    append_disabled(&menu, &format!("Version {}", env!("CARGO_PKG_VERSION")))?;
     if let Some(login) = &snapshot.signed_in_as {
         append_disabled(&menu, &format!("Signed in as {login}"))?;
     } else if snapshot.token_loaded {
@@ -315,6 +415,48 @@ fn rebuild_menu(
         "Open GitHub notifications",
         AppCommand::OpenUrl("https://github.com/notifications".to_string()),
     )?;
+
+    menu.append(&PredefinedMenuItem::separator())?;
+
+    if let Some(update) = &snapshot.available_update {
+        append_disabled(
+            &menu,
+            &format!("Update available: v{}", update.latest_version),
+        )?;
+        if snapshot.homebrew_cask_installed {
+            append_command(
+                &menu,
+                &mut commands,
+                "Update with Homebrew",
+                AppCommand::UpdateWithHomebrew,
+            )?;
+        }
+        append_command(
+            &menu,
+            &mut commands,
+            "Open release page",
+            AppCommand::OpenUrl(update.release_url.clone()),
+        )?;
+    } else if snapshot.is_checking_updates {
+        append_disabled(&menu, "Checking for updates...")?;
+    } else {
+        append_command(
+            &menu,
+            &mut commands,
+            "Check for updates",
+            AppCommand::CheckForUpdates,
+        )?;
+        append_command(
+            &menu,
+            &mut commands,
+            "Open release page",
+            AppCommand::OpenUrl(updater::RELEASES_URL.to_string()),
+        )?;
+    }
+
+    if let Some(update_status) = &snapshot.update_status {
+        append_disabled(&menu, &truncate_menu_label(update_status, 90))?;
+    }
 
     menu.append(&PredefinedMenuItem::separator())?;
 

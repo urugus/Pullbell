@@ -11,6 +11,9 @@ format and must match the version in `Cargo.toml`.
   locally from source with `brew install urugus/tap/pullbell`.
 - Updated release automation to publish both the Homebrew Formula and Cask to
   the tap.
+- Added in-app update checks against the latest GitHub Release.
+- Added menu actions for opening the release page and starting a Homebrew cask
+  update when Pullbell is installed with Homebrew.
 
 ## 0.2.0
 
