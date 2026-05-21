@@ -7,11 +7,12 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
-- Preserve the OAuth configuration error in the menu when sign-in cannot start.
-- Fail release builds when the embedded GitHub OAuth client ID secret is missing.
+- Nothing yet.
 
 ## 0.2.2
 
+- Preserve the OAuth configuration error in the menu when sign-in cannot start.
+- Fail release builds when the embedded GitHub OAuth client ID secret is missing.
 - Refactored pull request notification tracking into a dedicated module.
 - Added unit coverage for notification bootstrap, reset, and actionable item
   detection behavior.
