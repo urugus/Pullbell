@@ -9,7 +9,7 @@ format and must match the version in `Cargo.toml`.
 
 - Nothing yet.
 
-## 0.3.0
+## 0.4.0
 
 - Preserve the OAuth configuration error in the menu when sign-in cannot start.
 - Fail release builds when the embedded GitHub OAuth client ID secret is missing.
