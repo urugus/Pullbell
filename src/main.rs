@@ -128,7 +128,7 @@ async fn run_worker(
                 refresh(&state, &proxy, &mut known_ids, &mut bootstrapped).await;
             }
             _ = update_poll.tick() => {
-                check_for_updates(&state, &proxy, false).await;
+                spawn_update_check(&state, &proxy, false);
             }
             Some(command) = command_rx.recv() => {
                 match command {
@@ -140,7 +140,7 @@ async fn run_worker(
                         refresh(&state, &proxy, &mut known_ids, &mut bootstrapped).await;
                     }
                     AppCommand::CheckForUpdates => {
-                        check_for_updates(&state, &proxy, true).await;
+                        spawn_update_check(&state, &proxy, true);
                     }
                     AppCommand::UpdateWithHomebrew => {
                         start_homebrew_update(&state, &proxy);
@@ -168,6 +168,35 @@ async fn run_worker(
             }
         }
     }
+}
+
+fn spawn_update_check(
+    state: &Arc<Mutex<AppState>>,
+    proxy: &EventLoopProxy<AppEvent>,
+    show_status: bool,
+) {
+    {
+        let mut guard = state.lock().expect("state lock");
+        if guard.is_checking_updates {
+            if show_status {
+                guard.update_status = Some("Update check already in progress".to_string());
+            }
+            let _ = proxy.send_event(AppEvent::StateChanged);
+            return;
+        }
+
+        guard.is_checking_updates = true;
+        if show_status {
+            guard.update_status = None;
+        }
+    }
+    let _ = proxy.send_event(AppEvent::StateChanged);
+
+    let state = Arc::clone(state);
+    let proxy = proxy.clone();
+    tokio::spawn(async move {
+        check_for_updates(&state, &proxy, show_status).await;
+    });
 }
 
 async fn sign_in(
@@ -296,17 +325,10 @@ async fn check_for_updates(
     proxy: &EventLoopProxy<AppEvent>,
     show_status: bool,
 ) {
-    {
-        let mut guard = state.lock().expect("state lock");
-        guard.is_checking_updates = true;
-        if show_status {
-            guard.update_status = None;
-        }
-    }
-    let _ = proxy.send_event(AppEvent::StateChanged);
-
-    let homebrew_cask_installed = updater::is_homebrew_cask_installed();
+    let homebrew_cask_installed = tokio::task::spawn_blocking(updater::is_homebrew_cask_installed);
     let result = updater::check_latest_release(env!("CARGO_PKG_VERSION")).await;
+    let homebrew_cask_installed = homebrew_cask_installed.await.unwrap_or(false);
+
     let mut guard = state.lock().expect("state lock");
     guard.is_checking_updates = false;
     guard.homebrew_cask_installed = homebrew_cask_installed;
@@ -323,6 +345,7 @@ async fn check_for_updates(
         }
         Err(error) => {
             if show_status {
+                guard.available_update = None;
                 guard.update_status = Some(format!("Update check failed: {error:#}"));
             }
         }

@@ -3,10 +3,20 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::Client;
 use serde::Deserialize;
 use std::process::{Command, Stdio};
+use std::sync::LazyLock;
+use std::time::Duration;
 
 const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/urugus/Pullbell/releases/latest";
 pub const RELEASES_URL: &str = "https://github.com/urugus/Pullbell/releases";
 const USER_AGENT: &str = concat!("pullbell/", env!("CARGO_PKG_VERSION"));
+const UPDATE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+static RELEASE_CLIENT: LazyLock<Client> = LazyLock::new(|| {
+    Client::builder()
+        .timeout(UPDATE_REQUEST_TIMEOUT)
+        .build()
+        .expect("release HTTP client configuration should be valid")
+});
 
 #[derive(Debug, Deserialize)]
 struct LatestRelease {
@@ -15,7 +25,7 @@ struct LatestRelease {
 }
 
 pub async fn check_latest_release(current_version: &str) -> Result<Option<AvailableUpdate>> {
-    let release = Client::new()
+    let release = RELEASE_CLIENT
         .get(LATEST_RELEASE_URL)
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
@@ -100,7 +110,7 @@ fn brew_candidates() -> Vec<String> {
 fn is_newer_version(current: &str, latest: &str) -> bool {
     match (parse_version(current), parse_version(latest)) {
         (Some(current), Some(latest)) => latest > current,
-        _ => latest > current,
+        _ => false,
     }
 }
 
@@ -148,6 +158,12 @@ mod tests {
         assert_eq!(parse_version("v1.2.3"), Some((1, 2, 3)));
         assert_eq!(parse_version("1.2.3-beta.1"), Some((1, 2, 3)));
         assert_eq!(parse_version("1.2.3+build.1"), Some((1, 2, 3)));
+    }
+
+    #[test]
+    fn does_not_update_when_version_format_is_unknown() {
+        assert!(!is_newer_version("0.2.0", "release-0.3.0"));
+        assert!(!is_newer_version("not-semver", "0.3.0"));
     }
 
     #[test]
