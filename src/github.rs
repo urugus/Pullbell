@@ -63,17 +63,17 @@ impl GitHubClient {
             .context("loading review requests")?,
         );
 
-        for team in self.teams().await.unwrap_or_default() {
+        for team in self
+            .teams()
+            .await
+            .context("loading teams for review requests")?
+        {
+            let team_name = format!("{}/{}", team.organization.login, team.slug);
+            let query = format!("is:pr is:open archived:false team-review-requested:{team_name}");
             items.extend(
-                self.search_pull_requests(
-                    &format!(
-                        "is:pr is:open archived:false team-review-requested:{}/{}",
-                        team.organization.login, team.slug
-                    ),
-                    PrKind::ReviewRequested,
-                )
-                .await
-                .unwrap_or_default(),
+                self.search_pull_requests(&query, PrKind::ReviewRequested)
+                    .await
+                    .with_context(|| format!("loading team review requests for {team_name}"))?,
             );
         }
 
