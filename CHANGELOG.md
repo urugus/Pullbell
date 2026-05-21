@@ -7,9 +7,12 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
+## 0.3.0
+
 - Added in-app update checks against the latest GitHub Release.
 - Added menu actions for opening the release page and starting a Homebrew cask
   update when Pullbell is installed with Homebrew.
+- Added Pullbell logo assets.
 
 ## 0.2.0
 
