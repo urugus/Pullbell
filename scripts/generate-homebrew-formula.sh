@@ -33,7 +33,7 @@ class Pullbell < Formula
 
     (bin/"pullbell").write <<~SH
       #!/bin/bash
-      exec /usr/bin/open "#{opt_prefix}/Pullbell.app" "\$@"
+      exec /usr/bin/open "#{opt_prefix}/Pullbell.app"
     SH
     chmod 0755, bin/"pullbell"
   end
