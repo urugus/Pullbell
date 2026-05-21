@@ -156,10 +156,10 @@ archives. After the GitHub Release is published, the workflow updates the
 Homebrew Cask in `urugus/homebrew-tap` so users can install the new version with
 `brew install --cask urugus/tap/pullbell`.
 
-The Homebrew update requires these repository settings:
+The release workflow requires these repository settings:
 
 - Secret `PULLBELL_DEFAULT_CLIENT_ID`: GitHub OAuth App client ID embedded in
-  release builds.
+  release builds. Release builds fail when this secret is missing.
 - Secret `HOMEBREW_TAP_TOKEN`: token with write access to the Homebrew tap
   repository.
 - Optional variable `HOMEBREW_TAP_REPOSITORY`: tap repository override. Defaults

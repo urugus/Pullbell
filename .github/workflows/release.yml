@@ -64,6 +64,15 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Check OAuth client ID
+        env:
+          PULLBELL_DEFAULT_CLIENT_ID: ${{ secrets.PULLBELL_DEFAULT_CLIENT_ID }}
+        run: |
+          if [ -z "$(printf '%s' "${PULLBELL_DEFAULT_CLIENT_ID:-}" | tr -d '[:space:]')" ]; then
+            echo "PULLBELL_DEFAULT_CLIENT_ID is required for release builds." >&2
+            exit 1
+          fi
+
       - name: Build release binary
         env:
           PULLBELL_DEFAULT_CLIENT_ID: ${{ secrets.PULLBELL_DEFAULT_CLIENT_ID }}

@@ -3,11 +3,11 @@ use chrono::Utc;
 use mac_notification_sys::send_notification;
 use pullbell::auth::OAuthDeviceClient;
 use pullbell::github::GitHubClient;
-use pullbell::model::{PrKind, PullRequestItem};
+use pullbell::model::PullRequestItem;
 use pullbell::state::AppState;
 use pullbell::storage;
 use pullbell::updater;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -18,6 +18,9 @@ use tokio::sync::mpsc;
 use tray_icon::menu::{MenuEvent, MenuId};
 
 mod menu;
+mod notifications;
+
+use notifications::NotificationTracker;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(300);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60 * 12);
@@ -118,15 +121,14 @@ async fn run_worker(
     proxy: EventLoopProxy<AppEvent>,
     client_id: Option<String>,
 ) {
-    let mut known_ids = HashSet::new();
-    let mut bootstrapped = false;
+    let mut notification_tracker = NotificationTracker::default();
     let mut poll = tokio::time::interval(POLL_INTERVAL);
     let mut update_poll = tokio::time::interval(UPDATE_CHECK_INTERVAL);
 
     loop {
         tokio::select! {
             _ = poll.tick() => {
-                refresh(&state, &proxy, &mut known_ids, &mut bootstrapped).await;
+                refresh(&state, &proxy, &mut notification_tracker).await;
             }
             _ = update_poll.tick() => {
                 spawn_update_check(&state, &proxy, false);
@@ -134,11 +136,12 @@ async fn run_worker(
             Some(command) = command_rx.recv() => {
                 match command {
                     AppCommand::SignIn => {
-                        sign_in(&state, &proxy, client_id.clone()).await;
-                        refresh(&state, &proxy, &mut known_ids, &mut bootstrapped).await;
+                        if sign_in(&state, &proxy, client_id.clone()).await {
+                            refresh(&state, &proxy, &mut notification_tracker).await;
+                        }
                     }
                     AppCommand::Refresh => {
-                        refresh(&state, &proxy, &mut known_ids, &mut bootstrapped).await;
+                        refresh(&state, &proxy, &mut notification_tracker).await;
                     }
                     AppCommand::CheckForUpdates => {
                         spawn_update_check(&state, &proxy, true);
@@ -159,8 +162,7 @@ async fn run_worker(
                         let mut guard = state.lock().expect("state lock");
                         *guard = AppState::default();
                         guard.homebrew_cask_installed = homebrew_cask_installed;
-                        known_ids.clear();
-                        bootstrapped = false;
+                        notification_tracker.reset();
                         let _ = proxy.send_event(AppEvent::StateChanged);
                     }
                     AppCommand::OpenUrl(_) => {}
@@ -204,14 +206,14 @@ async fn sign_in(
     state: &Arc<Mutex<AppState>>,
     proxy: &EventLoopProxy<AppEvent>,
     client_id: Option<String>,
-) {
+) -> bool {
     let Some(client_id) = client_id else {
         set_error(
             state,
             "OAuth client ID is not configured. Set PULLBELL_CLIENT_ID or ~/.config/pullbell/client_id.".to_string(),
         );
         let _ = proxy.send_event(AppEvent::StateChanged);
-        return;
+        return false;
     };
 
     clear_error(state);
@@ -221,7 +223,7 @@ async fn sign_in(
         Err(error) => {
             set_error(state, format!("{error:#}"));
             let _ = proxy.send_event(AppEvent::StateChanged);
-            return;
+            return false;
         }
     };
 
@@ -243,22 +245,28 @@ async fn sign_in(
         Ok(token) => {
             if let Err(error) = storage::save_token(&token.token) {
                 set_error(state, format!("{error:#}"));
+                let _ = proxy.send_event(AppEvent::StateChanged);
+                false
             } else {
                 let mut guard = state.lock().expect("state lock");
                 guard.token_loaded = true;
                 guard.last_error = None;
+                let _ = proxy.send_event(AppEvent::StateChanged);
+                true
             }
         }
-        Err(error) => set_error(state, format!("{error:#}")),
+        Err(error) => {
+            set_error(state, format!("{error:#}"));
+            let _ = proxy.send_event(AppEvent::StateChanged);
+            false
+        }
     }
-    let _ = proxy.send_event(AppEvent::StateChanged);
 }
 
 async fn refresh(
     state: &Arc<Mutex<AppState>>,
     proxy: &EventLoopProxy<AppEvent>,
-    known_ids: &mut HashSet<String>,
-    bootstrapped: &mut bool,
+    notification_tracker: &mut NotificationTracker,
 ) {
     {
         let mut guard = state.lock().expect("state lock");
@@ -288,18 +296,9 @@ async fn refresh(
     match client.viewer().await {
         Ok(viewer) => match client.pull_requests_for(&viewer.login).await {
             Ok(items) => {
-                for item in &items {
-                    if *bootstrapped
-                        && !known_ids.contains(&item.id)
-                        && matches!(item.kind, PrKind::ReviewRequested | PrKind::Notification)
-                    {
-                        let _ = proxy.send_event(AppEvent::Notify(item.clone()));
-                    }
+                for item in notification_tracker.new_notifications(&items) {
+                    let _ = proxy.send_event(AppEvent::Notify(item));
                 }
-
-                known_ids.clear();
-                known_ids.extend(items.iter().map(|item| item.id.clone()));
-                *bootstrapped = true;
 
                 let mut guard = state.lock().expect("state lock");
                 guard.signed_in_as = Some(viewer.login);
