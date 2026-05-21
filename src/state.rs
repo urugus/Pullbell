@@ -1,4 +1,4 @@
-use crate::model::PullRequestItem;
+use crate::model::{AvailableUpdate, PullRequestItem};
 use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Default)]
@@ -6,8 +6,13 @@ pub struct AppState {
     pub signed_in_as: Option<String>,
     pub token_loaded: bool,
     pub is_refreshing: bool,
+    pub is_checking_updates: bool,
+    pub homebrew_cask_installed: bool,
     pub last_error: Option<String>,
+    pub update_status: Option<String>,
     pub last_refreshed_at: Option<DateTime<Utc>>,
+    pub last_update_checked_at: Option<DateTime<Utc>>,
+    pub available_update: Option<AvailableUpdate>,
     pub pull_requests: Vec<PullRequestItem>,
 }
 
