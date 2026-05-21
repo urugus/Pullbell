@@ -11,6 +11,11 @@ format and must match the version in `Cargo.toml`.
 - Added menu actions for opening the release page and starting a Homebrew cask
   update when Pullbell is installed with Homebrew.
 
+## 0.2.1
+
+- Added ad-hoc signing for macOS release archives.
+- Documented the local quarantine workaround for self-built app bundles.
+
 ## 0.2.0
 
 - Added macOS `.app` bundle packaging for release artifacts.
