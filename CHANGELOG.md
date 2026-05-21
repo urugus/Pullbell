@@ -7,12 +7,13 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
-- Added in-app update checks against the latest GitHub Release.
-- Added menu actions for opening the release page and starting a Homebrew cask
-  update when Pullbell is installed with Homebrew.
+- Nothing yet.
 
 ## 0.2.1
 
+- Added in-app update checks against the latest GitHub Release.
+- Added menu actions for opening the release page and starting a Homebrew cask
+  update when Pullbell is installed with Homebrew.
 - Added ad-hoc signing for macOS release archives.
 - Documented the local quarantine workaround for self-built app bundles.
 
