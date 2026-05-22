@@ -27,7 +27,26 @@ pub(super) fn rebuild(
     }
     menu.append(&PredefinedMenuItem::separator())?;
 
-    if !snapshot.token_loaded {
+    if let Some(auth) = &snapshot.pending_auth {
+        append_disabled(&menu, "GitHub sign-in is waiting")?;
+        append_disabled(&menu, "Enter this code on GitHub:")?;
+        append_disabled(&menu, &format!(">>> {} <<<", auth.user_code))?;
+        append_command(
+            &menu,
+            &mut commands,
+            "Copy sign-in code",
+            AppCommand::CopySignInCode,
+        )?;
+        append_command(
+            &menu,
+            &mut commands,
+            "Open GitHub device page",
+            AppCommand::OpenUrl(auth.verification_uri.clone()),
+        )?;
+        menu.append(&PredefinedMenuItem::separator())?;
+    }
+
+    if !snapshot.token_loaded && snapshot.pending_auth.is_none() {
         append_command(
             &menu,
             &mut commands,
