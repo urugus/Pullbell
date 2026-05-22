@@ -7,6 +7,10 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.4.1
+
 - Highlight the GitHub Device Flow code in the menu while sign-in is waiting.
 
 ## 0.4.0
