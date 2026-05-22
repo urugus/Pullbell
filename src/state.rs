@@ -13,7 +13,14 @@ pub struct AppState {
     pub last_refreshed_at: Option<DateTime<Utc>>,
     pub last_update_checked_at: Option<DateTime<Utc>>,
     pub available_update: Option<AvailableUpdate>,
+    pub pending_auth: Option<PendingAuth>,
     pub pull_requests: Vec<PullRequestItem>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingAuth {
+    pub user_code: String,
+    pub verification_uri: String,
 }
 
 impl AppState {

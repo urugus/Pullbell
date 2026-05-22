@@ -4,7 +4,7 @@ use mac_notification_sys::send_notification;
 use pullbell::auth::OAuthDeviceClient;
 use pullbell::github::GitHubClient;
 use pullbell::model::PullRequestItem;
-use pullbell::state::AppState;
+use pullbell::state::{AppState, PendingAuth};
 use pullbell::storage;
 use pullbell::updater;
 use std::collections::HashMap;
@@ -35,6 +35,7 @@ enum AppEvent {
 #[derive(Debug, Clone)]
 enum AppCommand {
     SignIn,
+    CopySignInCode,
     Refresh,
     CheckForUpdates,
     UpdateWithHomebrew,
@@ -86,6 +87,20 @@ fn main() -> Result<()> {
                         match command {
                             AppCommand::OpenUrl(url) => {
                                 let _ = open::that(url);
+                            }
+                            AppCommand::CopySignInCode => {
+                                let code = state
+                                    .lock()
+                                    .expect("state lock")
+                                    .pending_auth
+                                    .as_ref()
+                                    .map(|auth| auth.user_code.clone());
+
+                                if let (Some(code), Ok(mut clipboard)) =
+                                    (code, arboard::Clipboard::new())
+                                {
+                                    let _ = clipboard.set_text(code);
+                                }
                             }
                             AppCommand::Quit => {
                                 *control_flow = ControlFlow::Exit;
@@ -166,6 +181,7 @@ async fn run_worker(
                         let _ = proxy.send_event(AppEvent::StateChanged);
                     }
                     AppCommand::OpenUrl(_) => {}
+                    AppCommand::CopySignInCode => {}
                     AppCommand::Quit => {}
                 }
             }
@@ -233,12 +249,22 @@ async fn sign_in(
 
     {
         let mut guard = state.lock().expect("state lock");
+        guard.pending_auth = Some(PendingAuth {
+            user_code: code.user_code.clone(),
+            verification_uri: code.verification_uri.clone(),
+        });
         guard.last_error = Some(format!(
-            "GitHub sign-in opened. Enter code {}. The code was copied to the clipboard.",
+            "Enter GitHub code {}. The code was copied to the clipboard.",
             code.user_code
         ));
     }
     let _ = proxy.send_event(AppEvent::StateChanged);
+    let _ = send_notification(
+        "Pullbell GitHub Sign-in",
+        Some(&format!("Code {}", code.user_code)),
+        "Enter this code on the GitHub device authorization page. It was copied to the clipboard.",
+        None,
+    );
     let _ = open::that(&code.verification_uri);
 
     match client.wait_for_token(&code).await {
@@ -251,12 +277,14 @@ async fn sign_in(
                 let mut guard = state.lock().expect("state lock");
                 guard.token_loaded = true;
                 guard.last_error = None;
+                guard.pending_auth = None;
                 let _ = proxy.send_event(AppEvent::StateChanged);
                 true
             }
         }
         Err(error) => {
             set_error(state, format!("{error:#}"));
+            state.lock().expect("state lock").pending_auth = None;
             let _ = proxy.send_event(AppEvent::StateChanged);
             false
         }
@@ -372,6 +400,7 @@ fn clear_error(state: &Arc<Mutex<AppState>>) {
 fn set_error(state: &Arc<Mutex<AppState>>, error: String) {
     let mut guard = state.lock().expect("state lock");
     guard.is_refreshing = false;
+    guard.pending_auth = None;
     guard.last_error = Some(error);
 }
 
