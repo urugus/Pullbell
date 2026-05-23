@@ -17,6 +17,10 @@ impl PrKind {
         }
     }
 
+    pub fn is_todo(&self) -> bool {
+        matches!(self, Self::ReviewRequested | Self::Notification)
+    }
+
     fn priority(&self) -> u8 {
         match self {
             Self::ReviewRequested => 0,
@@ -40,6 +44,10 @@ pub struct PullRequestItem {
 impl PullRequestItem {
     pub fn display_title(&self) -> String {
         format!("{} #{}: {}", self.repo, self.number, self.title)
+    }
+
+    pub fn is_todo(&self) -> bool {
+        self.kind.is_todo()
     }
 }
 
@@ -125,5 +133,12 @@ mod tests {
 
         let ids: Vec<_> = merged.into_iter().map(|item| item.id).collect();
         assert_eq!(ids, vec!["2", "4", "1", "3"]);
+    }
+
+    #[test]
+    fn identifies_items_that_need_action() {
+        assert!(item("1", PrKind::ReviewRequested, 10).is_todo());
+        assert!(item("2", PrKind::Notification, 10).is_todo());
+        assert!(!item("3", PrKind::Authored, 10).is_todo());
     }
 }
