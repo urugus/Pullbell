@@ -24,8 +24,8 @@ impl PrKind {
     fn priority(&self) -> u8 {
         match self {
             Self::ReviewRequested => 0,
-            Self::Authored => 1,
-            Self::Notification => 2,
+            Self::Notification => 1,
+            Self::Authored => 2,
         }
     }
 }
@@ -110,16 +110,40 @@ mod tests {
             item("1", PrKind::Notification, 10),
             item("1", PrKind::ReviewRequested, 20),
             item("2", PrKind::Authored, 30),
+            item("2", PrKind::Notification, 40),
+            item("3", PrKind::Authored, 50),
         ]);
 
-        assert_eq!(merged.len(), 2);
+        assert_eq!(merged.len(), 3);
         assert_eq!(merged[0].id, "1");
         assert_eq!(merged[0].kind, PrKind::ReviewRequested);
         assert_eq!(
             merged[0].updated_at,
             Some(Utc.timestamp_opt(20, 0).unwrap())
         );
-        assert_eq!(merged[1].kind, PrKind::Authored);
+        assert_eq!(merged[1].id, "2");
+        assert_eq!(merged[1].kind, PrKind::Notification);
+        assert_eq!(
+            merged[1].updated_at,
+            Some(Utc.timestamp_opt(40, 0).unwrap())
+        );
+        assert_eq!(merged[2].kind, PrKind::Authored);
+    }
+
+    #[test]
+    fn merge_prefers_unread_notifications_over_authored_prs() {
+        let merged = merge_pr_items(vec![
+            item("2", PrKind::Authored, 30),
+            item("2", PrKind::Notification, 40),
+        ]);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].id, "2");
+        assert_eq!(merged[0].kind, PrKind::Notification);
+        assert_eq!(
+            merged[0].updated_at,
+            Some(Utc.timestamp_opt(40, 0).unwrap())
+        );
     }
 
     #[test]
@@ -132,7 +156,7 @@ mod tests {
         ]);
 
         let ids: Vec<_> = merged.into_iter().map(|item| item.id).collect();
-        assert_eq!(ids, vec!["2", "4", "1", "3"]);
+        assert_eq!(ids, vec!["2", "3", "4", "1"]);
     }
 
     #[test]

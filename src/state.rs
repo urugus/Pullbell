@@ -25,7 +25,7 @@ pub struct PendingAuth {
 
 impl AppState {
     pub fn tray_title(&self) -> String {
-        let count = self.todo_count();
+        let (count, _) = self.todo_done_counts();
         if count == 0 {
             "PR".to_string()
         } else {
@@ -34,14 +34,23 @@ impl AppState {
     }
 
     pub fn todo_count(&self) -> usize {
-        self.pull_requests
-            .iter()
-            .filter(|item| item.is_todo())
-            .count()
+        self.todo_done_counts().0
     }
 
     pub fn done_count(&self) -> usize {
-        self.pull_requests.len().saturating_sub(self.todo_count())
+        self.todo_done_counts().1
+    }
+
+    pub fn todo_done_counts(&self) -> (usize, usize) {
+        self.pull_requests
+            .iter()
+            .fold((0, 0), |(todo, done), item| {
+                if item.is_todo() {
+                    (todo + 1, done)
+                } else {
+                    (todo, done + 1)
+                }
+            })
     }
 }
 
@@ -73,6 +82,7 @@ mod tests {
             ..Default::default()
         };
 
+        assert_eq!(state.todo_done_counts(), (2, 1));
         assert_eq!(state.todo_count(), 2);
         assert_eq!(state.done_count(), 1);
         assert_eq!(state.tray_title(), "PR 2");

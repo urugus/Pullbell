@@ -49,14 +49,8 @@ pub(super) fn rebuild(
         menu.append(&PredefinedMenuItem::separator())?;
     }
 
-    append_disabled(
-        &menu,
-        &format!(
-            "ToDo {} / Done {}",
-            snapshot.todo_count(),
-            snapshot.done_count()
-        ),
-    )?;
+    let (todo_count, done_count) = snapshot.todo_done_counts();
+    append_disabled(&menu, &format!("ToDo {todo_count} / Done {done_count}"))?;
 
     if !snapshot.token_loaded && snapshot.pending_auth.is_none() {
         append_command(
@@ -176,8 +170,7 @@ fn append_pr_groups(
     commands: &mut HashMap<MenuId, AppCommand>,
     items: &[PullRequestItem],
 ) -> Result<()> {
-    let todo_count = items.iter().filter(|item| item.is_todo()).count();
-    let done_count = items.len().saturating_sub(todo_count);
+    let (todo_count, done_count) = count_pr_groups(items);
 
     append_disabled(menu, &format!("ToDo ({todo_count})"))?;
     if todo_count == 0 {
@@ -204,13 +197,17 @@ fn append_pr_section(
     items: &[PullRequestItem],
     kind: PrKind,
 ) -> Result<()> {
-    let section_items: Vec<_> = items.iter().filter(|item| item.kind == kind).collect();
-    if section_items.is_empty() {
+    let section_count = items.iter().filter(|item| item.kind == kind).count();
+    if section_count == 0 {
         return Ok(());
     }
 
     append_disabled(menu, kind.label())?;
-    for item in section_items.iter().take(MAX_ITEMS_PER_SECTION) {
+    for item in items
+        .iter()
+        .filter(|item| item.kind == kind)
+        .take(MAX_ITEMS_PER_SECTION)
+    {
         append_command(
             menu,
             commands,
@@ -219,12 +216,22 @@ fn append_pr_section(
         )?;
     }
 
-    let hidden_count = section_items.len().saturating_sub(MAX_ITEMS_PER_SECTION);
+    let hidden_count = section_count.saturating_sub(MAX_ITEMS_PER_SECTION);
     if hidden_count > 0 {
         append_disabled(menu, &format!("...and {hidden_count} more"))?;
     }
 
     Ok(())
+}
+
+fn count_pr_groups(items: &[PullRequestItem]) -> (usize, usize) {
+    items.iter().fold((0, 0), |(todo, done), item| {
+        if item.is_todo() {
+            (todo + 1, done)
+        } else {
+            (todo, done + 1)
+        }
+    })
 }
 
 pub(super) fn build_tray() -> Result<TrayIcon> {
