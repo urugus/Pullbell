@@ -11,9 +11,27 @@ format and must match the version in `Cargo.toml`.
   locally from source with `brew install urugus/tap/pullbell`.
 - Updated release automation to publish both the Homebrew Formula and Cask to
   the tap.
+
+## 0.4.1
+
+- Highlight the GitHub Device Flow code in the menu while sign-in is waiting.
+
+## 0.4.0
+
+- Preserve the OAuth configuration error in the menu when sign-in cannot start.
+- Embed Pullbell's GitHub OAuth client ID so release builds can start sign-in
+  without a repository secret or local client ID file.
+- Refactored pull request notification tracking into a dedicated module.
+- Added unit coverage for notification bootstrap, reset, and actionable item
+  detection behavior.
+
+## 0.2.1
+
 - Added in-app update checks against the latest GitHub Release.
 - Added menu actions for opening the release page and starting a Homebrew cask
   update when Pullbell is installed with Homebrew.
+- Added ad-hoc signing for macOS release archives.
+- Documented the local quarantine workaround for self-built app bundles.
 
 ## 0.2.0
 

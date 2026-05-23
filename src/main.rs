@@ -3,11 +3,11 @@ use chrono::Utc;
 use mac_notification_sys::send_notification;
 use pullbell::auth::OAuthDeviceClient;
 use pullbell::github::GitHubClient;
-use pullbell::model::{PrKind, PullRequestItem};
-use pullbell::state::AppState;
+use pullbell::model::PullRequestItem;
+use pullbell::state::{AppState, PendingAuth};
 use pullbell::storage;
 use pullbell::updater;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -15,12 +15,16 @@ use tao::event::{Event, StartCause};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
-use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
-use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+use tray_icon::menu::{MenuEvent, MenuId};
+
+mod menu;
+mod notifications;
+
+use notifications::NotificationTracker;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(300);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60 * 12);
-const DEFAULT_CLIENT_ID: Option<&str> = option_env!("PULLBELL_DEFAULT_CLIENT_ID");
+const DEFAULT_CLIENT_ID: &str = "Ov23liYs8QgtSc19mkZs";
 
 #[derive(Debug, Clone)]
 enum AppEvent {
@@ -31,6 +35,7 @@ enum AppEvent {
 #[derive(Debug, Clone)]
 enum AppCommand {
     SignIn,
+    CopySignInCode,
     Refresh,
     CheckForUpdates,
     UpdateWithHomebrew,
@@ -48,7 +53,7 @@ fn main() -> Result<()> {
 
     let client_id = load_client_id();
     let menu_commands = Arc::new(Mutex::new(HashMap::<MenuId, AppCommand>::new()));
-    let mut tray = build_tray()?;
+    let mut tray = menu::build_tray()?;
 
     if storage::load_token()?.is_some() {
         state.lock().expect("state lock").token_loaded = true;
@@ -62,7 +67,7 @@ fn main() -> Result<()> {
         client_id,
     ));
 
-    rebuild_menu(&mut tray, &state, &menu_commands, &command_tx)?;
+    menu::rebuild(&mut tray, &state, &menu_commands)?;
 
     let menu_events = MenuEvent::receiver();
     event_loop.run(move |event, _, control_flow| {
@@ -83,6 +88,20 @@ fn main() -> Result<()> {
                             AppCommand::OpenUrl(url) => {
                                 let _ = open::that(url);
                             }
+                            AppCommand::CopySignInCode => {
+                                let code = state
+                                    .lock()
+                                    .expect("state lock")
+                                    .pending_auth
+                                    .as_ref()
+                                    .map(|auth| auth.user_code.clone());
+
+                                if let (Some(code), Ok(mut clipboard)) =
+                                    (code, arboard::Clipboard::new())
+                                {
+                                    let _ = clipboard.set_text(code);
+                                }
+                            }
                             AppCommand::Quit => {
                                 *control_flow = ControlFlow::Exit;
                             }
@@ -94,7 +113,7 @@ fn main() -> Result<()> {
                 }
             }
             Event::UserEvent(AppEvent::StateChanged) => {
-                if let Err(error) = rebuild_menu(&mut tray, &state, &menu_commands, &command_tx) {
+                if let Err(error) = menu::rebuild(&mut tray, &state, &menu_commands) {
                     eprintln!("failed to rebuild menu: {error:#}");
                 }
             }
@@ -117,15 +136,14 @@ async fn run_worker(
     proxy: EventLoopProxy<AppEvent>,
     client_id: Option<String>,
 ) {
-    let mut known_ids = HashSet::new();
-    let mut bootstrapped = false;
+    let mut notification_tracker = NotificationTracker::default();
     let mut poll = tokio::time::interval(POLL_INTERVAL);
     let mut update_poll = tokio::time::interval(UPDATE_CHECK_INTERVAL);
 
     loop {
         tokio::select! {
             _ = poll.tick() => {
-                refresh(&state, &proxy, &mut known_ids, &mut bootstrapped).await;
+                refresh(&state, &proxy, &mut notification_tracker).await;
             }
             _ = update_poll.tick() => {
                 spawn_update_check(&state, &proxy, false);
@@ -133,11 +151,12 @@ async fn run_worker(
             Some(command) = command_rx.recv() => {
                 match command {
                     AppCommand::SignIn => {
-                        sign_in(&state, &proxy, client_id.clone()).await;
-                        refresh(&state, &proxy, &mut known_ids, &mut bootstrapped).await;
+                        if sign_in(&state, &proxy, client_id.clone()).await {
+                            refresh(&state, &proxy, &mut notification_tracker).await;
+                        }
                     }
                     AppCommand::Refresh => {
-                        refresh(&state, &proxy, &mut known_ids, &mut bootstrapped).await;
+                        refresh(&state, &proxy, &mut notification_tracker).await;
                     }
                     AppCommand::CheckForUpdates => {
                         spawn_update_check(&state, &proxy, true);
@@ -158,11 +177,11 @@ async fn run_worker(
                         let mut guard = state.lock().expect("state lock");
                         *guard = AppState::default();
                         guard.homebrew_cask_installed = homebrew_cask_installed;
-                        known_ids.clear();
-                        bootstrapped = false;
+                        notification_tracker.reset();
                         let _ = proxy.send_event(AppEvent::StateChanged);
                     }
                     AppCommand::OpenUrl(_) => {}
+                    AppCommand::CopySignInCode => {}
                     AppCommand::Quit => {}
                 }
             }
@@ -203,14 +222,14 @@ async fn sign_in(
     state: &Arc<Mutex<AppState>>,
     proxy: &EventLoopProxy<AppEvent>,
     client_id: Option<String>,
-) {
+) -> bool {
     let Some(client_id) = client_id else {
         set_error(
             state,
             "OAuth client ID is not configured. Set PULLBELL_CLIENT_ID or ~/.config/pullbell/client_id.".to_string(),
         );
         let _ = proxy.send_event(AppEvent::StateChanged);
-        return;
+        return false;
     };
 
     clear_error(state);
@@ -220,7 +239,7 @@ async fn sign_in(
         Err(error) => {
             set_error(state, format!("{error:#}"));
             let _ = proxy.send_event(AppEvent::StateChanged);
-            return;
+            return false;
         }
     };
 
@@ -230,34 +249,52 @@ async fn sign_in(
 
     {
         let mut guard = state.lock().expect("state lock");
+        guard.pending_auth = Some(PendingAuth {
+            user_code: code.user_code.clone(),
+            verification_uri: code.verification_uri.clone(),
+        });
         guard.last_error = Some(format!(
-            "GitHub sign-in opened. Enter code {}. The code was copied to the clipboard.",
+            "Enter GitHub code {}. The code was copied to the clipboard.",
             code.user_code
         ));
     }
     let _ = proxy.send_event(AppEvent::StateChanged);
+    let _ = send_notification(
+        "Pullbell GitHub Sign-in",
+        Some(&format!("Code {}", code.user_code)),
+        "Enter this code on the GitHub device authorization page. It was copied to the clipboard.",
+        None,
+    );
     let _ = open::that(&code.verification_uri);
 
     match client.wait_for_token(&code).await {
         Ok(token) => {
             if let Err(error) = storage::save_token(&token.token) {
                 set_error(state, format!("{error:#}"));
+                let _ = proxy.send_event(AppEvent::StateChanged);
+                false
             } else {
                 let mut guard = state.lock().expect("state lock");
                 guard.token_loaded = true;
                 guard.last_error = None;
+                guard.pending_auth = None;
+                let _ = proxy.send_event(AppEvent::StateChanged);
+                true
             }
         }
-        Err(error) => set_error(state, format!("{error:#}")),
+        Err(error) => {
+            set_error(state, format!("{error:#}"));
+            state.lock().expect("state lock").pending_auth = None;
+            let _ = proxy.send_event(AppEvent::StateChanged);
+            false
+        }
     }
-    let _ = proxy.send_event(AppEvent::StateChanged);
 }
 
 async fn refresh(
     state: &Arc<Mutex<AppState>>,
     proxy: &EventLoopProxy<AppEvent>,
-    known_ids: &mut HashSet<String>,
-    bootstrapped: &mut bool,
+    notification_tracker: &mut NotificationTracker,
 ) {
     {
         let mut guard = state.lock().expect("state lock");
@@ -284,37 +321,24 @@ async fn refresh(
     };
 
     let client = GitHubClient::new(token);
-    let viewer = client.viewer().await;
-    let pull_requests = client.pull_requests().await;
-
-    match (viewer, pull_requests) {
-        (Ok(viewer), Ok(items)) => {
-            for item in &items {
-                if *bootstrapped
-                    && !known_ids.contains(&item.id)
-                    && matches!(item.kind, PrKind::ReviewRequested | PrKind::Notification)
-                {
-                    let _ = proxy.send_event(AppEvent::Notify(item.clone()));
+    match client.viewer().await {
+        Ok(viewer) => match client.pull_requests_for(&viewer.login).await {
+            Ok(items) => {
+                for item in notification_tracker.new_notifications(&items) {
+                    let _ = proxy.send_event(AppEvent::Notify(item));
                 }
+
+                let mut guard = state.lock().expect("state lock");
+                guard.signed_in_as = Some(viewer.login);
+                guard.token_loaded = true;
+                guard.is_refreshing = false;
+                guard.last_refreshed_at = Some(Utc::now());
+                guard.last_error = None;
+                guard.pull_requests = items;
             }
-
-            known_ids.clear();
-            known_ids.extend(items.iter().map(|item| item.id.clone()));
-            *bootstrapped = true;
-
-            let mut guard = state.lock().expect("state lock");
-            guard.signed_in_as = Some(viewer.login);
-            guard.token_loaded = true;
-            guard.is_refreshing = false;
-            guard.last_refreshed_at = Some(Utc::now());
-            guard.last_error = None;
-            guard.pull_requests = items;
-        }
-        (Err(error), _) | (_, Err(error)) => {
-            let mut guard = state.lock().expect("state lock");
-            guard.is_refreshing = false;
-            guard.last_error = Some(format!("{error:#}"));
-        }
+            Err(error) => set_error(state, format!("{error:#}")),
+        },
+        Err(error) => set_error(state, format!("{error:#}")),
     }
 
     let _ = proxy.send_event(AppEvent::StateChanged);
@@ -369,194 +393,6 @@ fn start_homebrew_update(state: &Arc<Mutex<AppState>>, proxy: &EventLoopProxy<Ap
     let _ = proxy.send_event(AppEvent::StateChanged);
 }
 
-fn rebuild_menu(
-    tray: &mut TrayIcon,
-    state: &Arc<Mutex<AppState>>,
-    command_map: &Arc<Mutex<HashMap<MenuId, AppCommand>>>,
-    command_tx: &mpsc::UnboundedSender<AppCommand>,
-) -> Result<()> {
-    let snapshot = state.lock().expect("state lock").clone();
-    let menu = Menu::new();
-    let mut commands = HashMap::new();
-
-    append_disabled(&menu, "Pullbell")?;
-    append_disabled(&menu, &format!("Version {}", env!("CARGO_PKG_VERSION")))?;
-    if let Some(login) = &snapshot.signed_in_as {
-        append_disabled(&menu, &format!("Signed in as {login}"))?;
-    } else if snapshot.token_loaded {
-        append_disabled(&menu, "Signed in")?;
-    } else {
-        append_disabled(&menu, "Not signed in")?;
-    }
-    menu.append(&PredefinedMenuItem::separator())?;
-
-    if !snapshot.token_loaded {
-        append_command(
-            &menu,
-            &mut commands,
-            "Sign in with GitHub",
-            AppCommand::SignIn,
-        )?;
-    }
-
-    append_command(
-        &menu,
-        &mut commands,
-        if snapshot.is_refreshing {
-            "Refreshing..."
-        } else {
-            "Refresh now"
-        },
-        AppCommand::Refresh,
-    )?;
-    append_command(
-        &menu,
-        &mut commands,
-        "Open GitHub notifications",
-        AppCommand::OpenUrl("https://github.com/notifications".to_string()),
-    )?;
-
-    menu.append(&PredefinedMenuItem::separator())?;
-
-    if let Some(update) = &snapshot.available_update {
-        append_disabled(
-            &menu,
-            &format!("Update available: v{}", update.latest_version),
-        )?;
-        if snapshot.homebrew_cask_installed {
-            append_command(
-                &menu,
-                &mut commands,
-                "Update with Homebrew",
-                AppCommand::UpdateWithHomebrew,
-            )?;
-        }
-        append_command(
-            &menu,
-            &mut commands,
-            "Open release page",
-            AppCommand::OpenUrl(update.release_url.clone()),
-        )?;
-    } else if snapshot.is_checking_updates {
-        append_disabled(&menu, "Checking for updates...")?;
-    } else {
-        append_command(
-            &menu,
-            &mut commands,
-            "Check for updates",
-            AppCommand::CheckForUpdates,
-        )?;
-        append_command(
-            &menu,
-            &mut commands,
-            "Open release page",
-            AppCommand::OpenUrl(updater::RELEASES_URL.to_string()),
-        )?;
-    }
-
-    if let Some(update_status) = &snapshot.update_status {
-        append_disabled(&menu, &truncate_menu_label(update_status, 90))?;
-    }
-
-    menu.append(&PredefinedMenuItem::separator())?;
-
-    if snapshot.pull_requests.is_empty() {
-        append_disabled(&menu, "No pull requests need attention")?;
-    } else {
-        let mut current_label = "";
-        for item in snapshot.pull_requests.iter().take(20) {
-            if item.kind.label() != current_label {
-                current_label = item.kind.label();
-                append_disabled(&menu, current_label)?;
-            }
-            append_command(
-                &menu,
-                &mut commands,
-                &truncate_menu_label(&item.display_title(), 80),
-                AppCommand::OpenUrl(item.url.clone()),
-            )?;
-        }
-    }
-
-    menu.append(&PredefinedMenuItem::separator())?;
-
-    if let Some(error) = &snapshot.last_error {
-        append_disabled(&menu, &truncate_menu_label(error, 90))?;
-    } else if let Some(refreshed_at) = snapshot.last_refreshed_at {
-        append_disabled(
-            &menu,
-            &format!("Last refreshed {}", refreshed_at.format("%H:%M:%S")),
-        )?;
-    }
-
-    if snapshot.token_loaded {
-        append_command(&menu, &mut commands, "Sign out", AppCommand::SignOut)?;
-    }
-    append_command(&menu, &mut commands, "Quit", AppCommand::Quit)?;
-
-    *command_map.lock().expect("menu command lock") = commands;
-    tray.set_title(Some(&snapshot.tray_title()));
-    tray.set_tooltip(Some("Pullbell"))?;
-    tray.set_menu(Some(Box::new(menu)));
-
-    let _ = command_tx;
-
-    Ok(())
-}
-
-fn append_command(
-    menu: &Menu,
-    commands: &mut HashMap<MenuId, AppCommand>,
-    label: &str,
-    command: AppCommand,
-) -> Result<()> {
-    let item = MenuItem::new(label, true, None);
-    commands.insert(item.id().clone(), command);
-    menu.append(&item)?;
-    Ok(())
-}
-
-fn append_disabled(menu: &Menu, label: &str) -> Result<()> {
-    menu.append(&MenuItem::new(label, false, None))?;
-    Ok(())
-}
-
-fn build_tray() -> Result<TrayIcon> {
-    TrayIconBuilder::new()
-        .with_icon(build_icon()?)
-        .with_title("PR")
-        .with_tooltip("Pullbell")
-        .build()
-        .context("building macOS menu bar icon")
-}
-
-fn build_icon() -> Result<Icon> {
-    let mut rgba = Vec::with_capacity(16 * 16 * 4);
-    for y in 0..16 {
-        for x in 0..16 {
-            let in_dot = ((3..=5).contains(&x) && (3..=5).contains(&y))
-                || ((10..=12).contains(&x) && (10..=12).contains(&y));
-            let in_line = (x == 4 && y > 5 && y < 12)
-                || (y == 11 && x > 4 && x < 10)
-                || (x == 11 && y > 5 && y < 10);
-            let alpha = if in_dot || in_line { 255 } else { 0 };
-            rgba.extend_from_slice(&[0, 0, 0, alpha]);
-        }
-    }
-    Icon::from_rgba(rgba, 16, 16).context("building tray icon")
-}
-
-fn truncate_menu_label(label: &str, max_chars: usize) -> String {
-    let count = label.chars().count();
-    if count <= max_chars {
-        label.to_string()
-    } else {
-        let mut value: String = label.chars().take(max_chars.saturating_sub(1)).collect();
-        value.push_str("...");
-        value
-    }
-}
-
 fn clear_error(state: &Arc<Mutex<AppState>>) {
     state.lock().expect("state lock").last_error = None;
 }
@@ -564,6 +400,7 @@ fn clear_error(state: &Arc<Mutex<AppState>>) {
 fn set_error(state: &Arc<Mutex<AppState>>, error: String) {
     let mut guard = state.lock().expect("state lock");
     guard.is_refreshing = false;
+    guard.pending_auth = None;
     guard.last_error = Some(error);
 }
 
@@ -579,9 +416,7 @@ fn load_client_id() -> Option<String> {
                 .filter(|value| !value.is_empty())
         })
         .or_else(|| {
-            DEFAULT_CLIENT_ID
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
+            let client_id = DEFAULT_CLIENT_ID.trim();
+            (!client_id.is_empty()).then(|| client_id.to_string())
         })
 }

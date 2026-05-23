@@ -5,7 +5,7 @@ use reqwest::Client;
 use serde::Deserialize;
 
 const API_VERSION: &str = "2022-11-28";
-const USER_AGENT: &str = "pullbell/0.1";
+const USER_AGENT: &str = concat!("pullbell/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Clone)]
 pub struct GitHubClient {
@@ -48,15 +48,14 @@ impl GitHubClient {
         })
     }
 
-    pub async fn pull_requests(&self) -> Result<Vec<PullRequestItem>> {
-        let viewer = self.viewer().await?;
+    pub async fn pull_requests_for(&self, viewer_login: &str) -> Result<Vec<PullRequestItem>> {
         let mut items = Vec::new();
 
         items.extend(
             self.search_pull_requests(
                 &format!(
                     "is:pr is:open archived:false review-requested:{}",
-                    viewer.login
+                    viewer_login
                 ),
                 PrKind::ReviewRequested,
             )
@@ -64,23 +63,23 @@ impl GitHubClient {
             .context("loading review requests")?,
         );
 
-        for team in self.teams().await.unwrap_or_default() {
+        for team in self
+            .teams()
+            .await
+            .context("loading teams for review requests")?
+        {
+            let team_name = format!("{}/{}", team.organization.login, team.slug);
+            let query = format!("is:pr is:open archived:false team-review-requested:{team_name}");
             items.extend(
-                self.search_pull_requests(
-                    &format!(
-                        "is:pr is:open archived:false team-review-requested:{}/{}",
-                        team.organization.login, team.slug
-                    ),
-                    PrKind::ReviewRequested,
-                )
-                .await
-                .unwrap_or_default(),
+                self.search_pull_requests(&query, PrKind::ReviewRequested)
+                    .await
+                    .with_context(|| format!("loading team review requests for {team_name}"))?,
             );
         }
 
         items.extend(
             self.search_pull_requests(
-                &format!("is:pr is:open archived:false author:{}", viewer.login),
+                &format!("is:pr is:open archived:false author:{}", viewer_login),
                 PrKind::Authored,
             )
             .await

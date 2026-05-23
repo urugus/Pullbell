@@ -65,16 +65,15 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build release binary
-        env:
-          PULLBELL_DEFAULT_CLIENT_ID: ${{ secrets.PULLBELL_DEFAULT_CLIENT_ID }}
         run: cargo build --release --locked --target "${{ matrix.target }}"
 
-      - name: Package app bundle
+      - name: Package and ad-hoc sign app bundle
         run: |
           version="${GITHUB_REF_NAME#v}"
           package="pullbell-${version}-${{ matrix.target }}"
           mkdir -p "dist/$package"
           scripts/package-macos-app.sh "target/${{ matrix.target }}/release/pullbell" "dist/$package" "$version"
+          scripts/sign-macos-app.sh "dist/$package/Pullbell.app" -
           ditto --norsrc -c -k --keepParent "dist/$package/Pullbell.app" "dist/$package.zip"
 
       - name: Upload package
