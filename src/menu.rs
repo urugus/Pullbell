@@ -1,11 +1,14 @@
 use super::AppCommand;
 use anyhow::{Context, Result};
+use pullbell::model::{PrKind, PullRequestItem};
 use pullbell::state::AppState;
 use pullbell::updater;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tray_icon::menu::{Menu, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+
+const MAX_ITEMS_PER_SECTION: usize = 12;
 
 pub(super) fn rebuild(
     tray: &mut TrayIcon,
@@ -46,6 +49,9 @@ pub(super) fn rebuild(
         menu.append(&PredefinedMenuItem::separator())?;
     }
 
+    let (todo_count, done_count) = snapshot.todo_done_counts();
+    append_disabled(&menu, &format!("ToDo {todo_count} / Done {done_count}"))?;
+
     if !snapshot.token_loaded && snapshot.pending_auth.is_none() {
         append_command(
             &menu,
@@ -68,7 +74,7 @@ pub(super) fn rebuild(
     append_command(
         &menu,
         &mut commands,
-        "Open GitHub notifications",
+        "Open GitHub inbox",
         AppCommand::OpenUrl("https://github.com/notifications".to_string()),
     )?;
 
@@ -116,23 +122,7 @@ pub(super) fn rebuild(
 
     menu.append(&PredefinedMenuItem::separator())?;
 
-    if snapshot.pull_requests.is_empty() {
-        append_disabled(&menu, "No pull requests need attention")?;
-    } else {
-        let mut current_label = "";
-        for item in snapshot.pull_requests.iter().take(20) {
-            if item.kind.label() != current_label {
-                current_label = item.kind.label();
-                append_disabled(&menu, current_label)?;
-            }
-            append_command(
-                &menu,
-                &mut commands,
-                &truncate_menu_label(&item.display_title(), 80),
-                AppCommand::OpenUrl(item.url.clone()),
-            )?;
-        }
-    }
+    append_pr_groups(&menu, &mut commands, &snapshot.pull_requests)?;
 
     menu.append(&PredefinedMenuItem::separator())?;
 
@@ -173,6 +163,75 @@ fn append_command(
 fn append_disabled(menu: &Menu, label: &str) -> Result<()> {
     menu.append(&MenuItem::new(label, false, None))?;
     Ok(())
+}
+
+fn append_pr_groups(
+    menu: &Menu,
+    commands: &mut HashMap<MenuId, AppCommand>,
+    items: &[PullRequestItem],
+) -> Result<()> {
+    let (todo_count, done_count) = count_pr_groups(items);
+
+    append_disabled(menu, &format!("ToDo ({todo_count})"))?;
+    if todo_count == 0 {
+        append_disabled(menu, "All caught up")?;
+    } else {
+        append_pr_section(menu, commands, items, PrKind::ReviewRequested)?;
+        append_pr_section(menu, commands, items, PrKind::Notification)?;
+    }
+
+    menu.append(&PredefinedMenuItem::separator())?;
+    append_disabled(menu, &format!("Done ({done_count})"))?;
+    if done_count == 0 {
+        append_disabled(menu, "No open PRs being tracked")?;
+    } else {
+        append_pr_section(menu, commands, items, PrKind::Authored)?;
+    }
+
+    Ok(())
+}
+
+fn append_pr_section(
+    menu: &Menu,
+    commands: &mut HashMap<MenuId, AppCommand>,
+    items: &[PullRequestItem],
+    kind: PrKind,
+) -> Result<()> {
+    let section_count = items.iter().filter(|item| item.kind == kind).count();
+    if section_count == 0 {
+        return Ok(());
+    }
+
+    append_disabled(menu, kind.label())?;
+    for item in items
+        .iter()
+        .filter(|item| item.kind == kind)
+        .take(MAX_ITEMS_PER_SECTION)
+    {
+        append_command(
+            menu,
+            commands,
+            &truncate_menu_label(&item.display_title(), 80),
+            AppCommand::OpenUrl(item.url.clone()),
+        )?;
+    }
+
+    let hidden_count = section_count.saturating_sub(MAX_ITEMS_PER_SECTION);
+    if hidden_count > 0 {
+        append_disabled(menu, &format!("...and {hidden_count} more"))?;
+    }
+
+    Ok(())
+}
+
+fn count_pr_groups(items: &[PullRequestItem]) -> (usize, usize) {
+    items.iter().fold((0, 0), |(todo, done), item| {
+        if item.is_todo() {
+            (todo + 1, done)
+        } else {
+            (todo, done + 1)
+        }
+    })
 }
 
 pub(super) fn build_tray() -> Result<TrayIcon> {

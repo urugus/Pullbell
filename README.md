@@ -16,7 +16,7 @@ noise. The current implementation focuses on Phase 1-4 MVP scope:
 
 - GitHub OAuth Device Flow sign-in, no PAT required.
 - Org/private repository support through OAuth scopes.
-- Menu bar list for review requests, your open PRs, and unread PR notifications.
+- Menu bar ToDo/Done list for review requests, unread PR notifications, and your open PRs.
 - Desktop notifications for newly seen actionable PR items.
 - Token storage in macOS Keychain.
 - Unit tests for PR merging and ordering.
