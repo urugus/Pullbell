@@ -11,14 +11,16 @@ use std::collections::HashMap;
 use std::fs;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tao::event::{Event, StartCause};
+use tao::event::{Event, StartCause, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use tray_icon::menu::{MenuEvent, MenuId};
+use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
 
 mod menu;
 mod notifications;
+mod panel;
 
 use notifications::NotificationTracker;
 
@@ -30,6 +32,7 @@ const DEFAULT_CLIENT_ID: &str = "Ov23liYs8QgtSc19mkZs";
 enum AppEvent {
     StateChanged,
     Notify(PullRequestItem),
+    PanelCommand(String),
 }
 
 #[derive(Debug, Clone)]
@@ -54,8 +57,11 @@ fn main() -> Result<()> {
     let client_id = load_client_id();
     let menu_commands = Arc::new(Mutex::new(HashMap::<MenuId, AppCommand>::new()));
     let mut tray = menu::build_tray()?;
+    let initial_snapshot = state.lock().expect("state lock").clone();
+    let mut panel = panel::Panel::new(&event_loop, proxy.clone(), &initial_snapshot)?;
 
-    if storage::load_token()?.is_some() {
+    let initial_token = storage::load_token()?;
+    if initial_token.is_some() {
         state.lock().expect("state lock").token_loaded = true;
         command_tx.send(AppCommand::Refresh).ok();
     }
@@ -65,17 +71,31 @@ fn main() -> Result<()> {
         Arc::clone(&state),
         proxy.clone(),
         client_id,
+        initial_token,
     ));
 
     menu::rebuild(&mut tray, &state, &menu_commands)?;
 
     let menu_events = MenuEvent::receiver();
+    let tray_events = TrayIconEvent::receiver();
     event_loop.run(move |event, _, control_flow| {
         *control_flow =
             ControlFlow::WaitUntil(std::time::Instant::now() + Duration::from_millis(250));
 
         match event {
             Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
+                while let Ok(tray_event) = tray_events.try_recv() {
+                    if let TrayIconEvent::Click {
+                        rect,
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = tray_event
+                    {
+                        panel.toggle_near(rect);
+                    }
+                }
+
                 while let Ok(menu_event) = menu_events.try_recv() {
                     let command = menu_commands
                         .lock()
@@ -116,6 +136,10 @@ fn main() -> Result<()> {
                 if let Err(error) = menu::rebuild(&mut tray, &state, &menu_commands) {
                     eprintln!("failed to rebuild menu: {error:#}");
                 }
+                let snapshot = state.lock().expect("state lock").clone();
+                if let Err(error) = panel.update(&snapshot) {
+                    eprintln!("failed to update panel: {error:#}");
+                }
             }
             Event::UserEvent(AppEvent::Notify(item)) => {
                 let _ = send_notification(
@@ -125,9 +149,77 @@ fn main() -> Result<()> {
                     None,
                 );
             }
+            Event::UserEvent(AppEvent::PanelCommand(command)) => {
+                if let Some(command) = panel_command(&state, command) {
+                    match command {
+                        AppCommand::OpenUrl(url) => {
+                            let _ = open::that(url);
+                        }
+                        AppCommand::CopySignInCode => {
+                            let code = state
+                                .lock()
+                                .expect("state lock")
+                                .pending_auth
+                                .as_ref()
+                                .map(|auth| auth.user_code.clone());
+
+                            if let (Some(code), Ok(mut clipboard)) =
+                                (code, arboard::Clipboard::new())
+                            {
+                                let _ = clipboard.set_text(code);
+                            }
+                        }
+                        AppCommand::SignOut => {
+                            panel.hide();
+                            let _ = command_tx.send(AppCommand::SignOut);
+                        }
+                        AppCommand::Quit => {
+                            *control_flow = ControlFlow::Exit;
+                        }
+                        other => {
+                            let _ = command_tx.send(other);
+                        }
+                    }
+                }
+            }
+            Event::WindowEvent {
+                window_id,
+                event: WindowEvent::Focused(false),
+                ..
+            } if window_id == panel.window_id() => {
+                panel.hide();
+            }
             _ => {}
         }
     });
+}
+
+fn panel_command(state: &Arc<Mutex<AppState>>, command: String) -> Option<AppCommand> {
+    match command.as_str() {
+        "signin" => Some(AppCommand::SignIn),
+        "copy-signin-code" => Some(AppCommand::CopySignInCode),
+        "refresh" => Some(AppCommand::Refresh),
+        "check-updates" => Some(AppCommand::CheckForUpdates),
+        "update-homebrew" => Some(AppCommand::UpdateWithHomebrew),
+        "signout" => Some(AppCommand::SignOut),
+        "inbox" => Some(AppCommand::OpenUrl(
+            "https://github.com/notifications".to_string(),
+        )),
+        "quit" => Some(AppCommand::Quit),
+        _ => command
+            .strip_prefix("open:")
+            .filter(|url| {
+                url.starts_with("https://github.com/")
+                    || state
+                        .lock()
+                        .expect("state lock")
+                        .pending_auth
+                        .as_ref()
+                        .is_some_and(|auth| auth.verification_uri == *url)
+                    || pullbell::updater::RELEASES_URL == *url
+            })
+            .map(|url| AppCommand::OpenUrl(url.to_string())),
+    }
 }
 
 async fn run_worker(
@@ -135,6 +227,7 @@ async fn run_worker(
     state: Arc<Mutex<AppState>>,
     proxy: EventLoopProxy<AppEvent>,
     client_id: Option<String>,
+    mut token_cache: Option<String>,
 ) {
     let mut notification_tracker = NotificationTracker::default();
     let mut poll = tokio::time::interval(POLL_INTERVAL);
@@ -143,7 +236,7 @@ async fn run_worker(
     loop {
         tokio::select! {
             _ = poll.tick() => {
-                refresh(&state, &proxy, &mut notification_tracker).await;
+                refresh(&state, &proxy, &mut notification_tracker, token_cache.as_deref()).await;
             }
             _ = update_poll.tick() => {
                 spawn_update_check(&state, &proxy, false);
@@ -151,12 +244,13 @@ async fn run_worker(
             Some(command) = command_rx.recv() => {
                 match command {
                     AppCommand::SignIn => {
-                        if sign_in(&state, &proxy, client_id.clone()).await {
-                            refresh(&state, &proxy, &mut notification_tracker).await;
+                        if let Some(token) = sign_in(&state, &proxy, client_id.clone()).await {
+                            token_cache = Some(token);
+                            refresh(&state, &proxy, &mut notification_tracker, token_cache.as_deref()).await;
                         }
                     }
                     AppCommand::Refresh => {
-                        refresh(&state, &proxy, &mut notification_tracker).await;
+                        refresh(&state, &proxy, &mut notification_tracker, token_cache.as_deref()).await;
                     }
                     AppCommand::CheckForUpdates => {
                         spawn_update_check(&state, &proxy, true);
@@ -177,6 +271,7 @@ async fn run_worker(
                         let mut guard = state.lock().expect("state lock");
                         *guard = AppState::default();
                         guard.homebrew_cask_installed = homebrew_cask_installed;
+                        token_cache = None;
                         notification_tracker.reset();
                         let _ = proxy.send_event(AppEvent::StateChanged);
                     }
@@ -222,14 +317,14 @@ async fn sign_in(
     state: &Arc<Mutex<AppState>>,
     proxy: &EventLoopProxy<AppEvent>,
     client_id: Option<String>,
-) -> bool {
+) -> Option<String> {
     let Some(client_id) = client_id else {
         set_error(
             state,
             "OAuth client ID is not configured. Set PULLBELL_CLIENT_ID or ~/.config/pullbell/client_id.".to_string(),
         );
         let _ = proxy.send_event(AppEvent::StateChanged);
-        return false;
+        return None;
     };
 
     clear_error(state);
@@ -239,7 +334,7 @@ async fn sign_in(
         Err(error) => {
             set_error(state, format!("{error:#}"));
             let _ = proxy.send_event(AppEvent::StateChanged);
-            return false;
+            return None;
         }
     };
 
@@ -272,21 +367,21 @@ async fn sign_in(
             if let Err(error) = storage::save_token(&token.token) {
                 set_error(state, format!("{error:#}"));
                 let _ = proxy.send_event(AppEvent::StateChanged);
-                false
+                None
             } else {
                 let mut guard = state.lock().expect("state lock");
                 guard.token_loaded = true;
                 guard.last_error = None;
                 guard.pending_auth = None;
                 let _ = proxy.send_event(AppEvent::StateChanged);
-                true
+                Some(token.token)
             }
         }
         Err(error) => {
             set_error(state, format!("{error:#}"));
             state.lock().expect("state lock").pending_auth = None;
             let _ = proxy.send_event(AppEvent::StateChanged);
-            false
+            None
         }
     }
 }
@@ -295,6 +390,7 @@ async fn refresh(
     state: &Arc<Mutex<AppState>>,
     proxy: &EventLoopProxy<AppEvent>,
     notification_tracker: &mut NotificationTracker,
+    token: Option<&str>,
 ) {
     {
         let mut guard = state.lock().expect("state lock");
@@ -303,21 +399,13 @@ async fn refresh(
     }
     let _ = proxy.send_event(AppEvent::StateChanged);
 
-    let token = match storage::load_token() {
-        Ok(Some(token)) => token,
-        Ok(None) => {
-            let mut guard = state.lock().expect("state lock");
-            guard.is_refreshing = false;
-            guard.token_loaded = false;
-            guard.pull_requests.clear();
-            let _ = proxy.send_event(AppEvent::StateChanged);
-            return;
-        }
-        Err(error) => {
-            set_error(state, format!("{error:#}"));
-            let _ = proxy.send_event(AppEvent::StateChanged);
-            return;
-        }
+    let Some(token) = token else {
+        let mut guard = state.lock().expect("state lock");
+        guard.is_refreshing = false;
+        guard.token_loaded = false;
+        guard.pull_requests.clear();
+        let _ = proxy.send_event(AppEvent::StateChanged);
+        return;
     };
 
     let client = GitHubClient::new(token);
