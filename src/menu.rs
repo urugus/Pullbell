@@ -1,5 +1,6 @@
 use super::AppCommand;
 use anyhow::{Context, Result};
+use chrono::{DateTime, Duration, Utc};
 use pullbell::model::{PrKind, PullRequestItem};
 use pullbell::state::AppState;
 use pullbell::updater;
@@ -9,6 +10,7 @@ use tray_icon::menu::{Menu, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 const MAX_ITEMS_PER_SECTION: usize = 12;
+const MAX_MENU_LABEL_CHARS: usize = 92;
 
 pub(super) fn rebuild(
     tray: &mut TrayIcon,
@@ -21,6 +23,7 @@ pub(super) fn rebuild(
 
     append_disabled(&menu, "Pullbell")?;
     append_disabled(&menu, &format!("Version {}", env!("CARGO_PKG_VERSION")))?;
+    append_disabled(&menu, "GitHub pull requests on your menu bar")?;
     if let Some(login) = &snapshot.signed_in_as {
         append_disabled(&menu, &format!("Signed in as {login}"))?;
     } else if snapshot.token_loaded {
@@ -30,40 +33,116 @@ pub(super) fn rebuild(
     }
     menu.append(&PredefinedMenuItem::separator())?;
 
+    append_pinned_section(&menu, &mut commands, &snapshot)?;
+
+    menu.append(&PredefinedMenuItem::separator())?;
+
+    append_pr_groups(&menu, &mut commands, &snapshot.pull_requests)?;
+
+    menu.append(&PredefinedMenuItem::separator())?;
+
+    append_actions_section(&menu, &mut commands, &snapshot)?;
+
+    menu.append(&PredefinedMenuItem::separator())?;
+
+    append_command(&menu, &mut commands, "Quit Pullbell", AppCommand::Quit)?;
+
+    *command_map.lock().expect("menu command lock") = commands;
+    tray.set_title(Some(&snapshot.tray_title()));
+    tray.set_tooltip(Some("Pullbell"))?;
+    tray.set_menu(Some(Box::new(menu)));
+
+    Ok(())
+}
+
+fn append_pinned_section(
+    menu: &Menu,
+    commands: &mut HashMap<MenuId, AppCommand>,
+    snapshot: &AppState,
+) -> Result<()> {
+    append_disabled(menu, "Pinned")?;
+
     if let Some(auth) = &snapshot.pending_auth {
-        append_disabled(&menu, "GitHub sign-in is waiting")?;
-        append_disabled(&menu, "Enter this code on GitHub:")?;
-        append_disabled(&menu, &format!(">>> {} <<<", auth.user_code))?;
+        append_disabled(menu, "GitHub sign-in is waiting")?;
+        append_disabled(menu, "Enter this code on GitHub:")?;
+        append_disabled(menu, &format!(">>> {} <<<", auth.user_code))?;
         append_command(
-            &menu,
-            &mut commands,
+            menu,
+            commands,
             "Copy sign-in code",
             AppCommand::CopySignInCode,
         )?;
         append_command(
-            &menu,
-            &mut commands,
+            menu,
+            commands,
             "Open GitHub device page",
             AppCommand::OpenUrl(auth.verification_uri.clone()),
         )?;
-        menu.append(&PredefinedMenuItem::separator())?;
+        return Ok(());
     }
 
-    let (todo_count, done_count) = snapshot.todo_done_counts();
-    append_disabled(&menu, &format!("ToDo {todo_count} / Done {done_count}"))?;
+    if let Some(update) = &snapshot.available_update {
+        append_disabled(
+            menu,
+            &format!("Update available: v{}", update.latest_version),
+        )?;
+        if snapshot.homebrew_cask_installed {
+            append_command(
+                menu,
+                commands,
+                "Update with Homebrew",
+                AppCommand::UpdateWithHomebrew,
+            )?;
+        }
+        append_command(
+            menu,
+            commands,
+            "Open release page",
+            AppCommand::OpenUrl(update.release_url.clone()),
+        )?;
+        return Ok(());
+    }
+
+    if let Some(update_status) = &snapshot.update_status {
+        append_disabled(
+            menu,
+            &truncate_menu_label(update_status, MAX_MENU_LABEL_CHARS),
+        )?;
+        return Ok(());
+    }
+
+    if snapshot.is_checking_updates {
+        append_disabled(menu, "Checking for updates...")?;
+    } else if let Some(error) = &snapshot.last_error {
+        append_disabled(menu, &truncate_menu_label(error, MAX_MENU_LABEL_CHARS))?;
+    } else if let Some(refreshed_at) = snapshot.last_refreshed_at {
+        append_disabled(
+            menu,
+            &format!("Last refreshed {}", refreshed_at.format("%H:%M:%S")),
+        )?;
+    } else if snapshot.token_loaded {
+        append_disabled(menu, "Ready to watch pull requests")?;
+    } else {
+        append_disabled(menu, "Sign in to start watching pull requests")?;
+    }
+
+    Ok(())
+}
+
+fn append_actions_section(
+    menu: &Menu,
+    commands: &mut HashMap<MenuId, AppCommand>,
+    snapshot: &AppState,
+) -> Result<()> {
+    append_disabled(menu, "Actions")?;
 
     if !snapshot.token_loaded && snapshot.pending_auth.is_none() {
-        append_command(
-            &menu,
-            &mut commands,
-            "Sign in with GitHub",
-            AppCommand::SignIn,
-        )?;
+        append_command(menu, commands, "Sign in with GitHub", AppCommand::SignIn)?;
     }
 
     append_command(
-        &menu,
-        &mut commands,
+        menu,
+        commands,
         if snapshot.is_refreshing {
             "Refreshing..."
         } else {
@@ -72,78 +151,34 @@ pub(super) fn rebuild(
         AppCommand::Refresh,
     )?;
     append_command(
-        &menu,
-        &mut commands,
+        menu,
+        commands,
         "Open GitHub inbox",
         AppCommand::OpenUrl("https://github.com/notifications".to_string()),
     )?;
 
-    menu.append(&PredefinedMenuItem::separator())?;
-
-    if let Some(update) = &snapshot.available_update {
-        append_disabled(
-            &menu,
-            &format!("Update available: v{}", update.latest_version),
-        )?;
-        if snapshot.homebrew_cask_installed {
+    if snapshot.available_update.is_none() {
+        if snapshot.is_checking_updates {
+            append_disabled(menu, "Checking for updates...")?;
+        } else {
             append_command(
-                &menu,
-                &mut commands,
-                "Update with Homebrew",
-                AppCommand::UpdateWithHomebrew,
+                menu,
+                commands,
+                "Check for updates",
+                AppCommand::CheckForUpdates,
             )?;
         }
         append_command(
-            &menu,
-            &mut commands,
-            "Open release page",
-            AppCommand::OpenUrl(update.release_url.clone()),
-        )?;
-    } else if snapshot.is_checking_updates {
-        append_disabled(&menu, "Checking for updates...")?;
-    } else {
-        append_command(
-            &menu,
-            &mut commands,
-            "Check for updates",
-            AppCommand::CheckForUpdates,
-        )?;
-        append_command(
-            &menu,
-            &mut commands,
+            menu,
+            commands,
             "Open release page",
             AppCommand::OpenUrl(updater::RELEASES_URL.to_string()),
         )?;
     }
 
-    if let Some(update_status) = &snapshot.update_status {
-        append_disabled(&menu, &truncate_menu_label(update_status, 90))?;
-    }
-
-    menu.append(&PredefinedMenuItem::separator())?;
-
-    append_pr_groups(&menu, &mut commands, &snapshot.pull_requests)?;
-
-    menu.append(&PredefinedMenuItem::separator())?;
-
-    if let Some(error) = &snapshot.last_error {
-        append_disabled(&menu, &truncate_menu_label(error, 90))?;
-    } else if let Some(refreshed_at) = snapshot.last_refreshed_at {
-        append_disabled(
-            &menu,
-            &format!("Last refreshed {}", refreshed_at.format("%H:%M:%S")),
-        )?;
-    }
-
     if snapshot.token_loaded {
-        append_command(&menu, &mut commands, "Sign out", AppCommand::SignOut)?;
+        append_command(menu, commands, "Sign out", AppCommand::SignOut)?;
     }
-    append_command(&menu, &mut commands, "Quit", AppCommand::Quit)?;
-
-    *command_map.lock().expect("menu command lock") = commands;
-    tray.set_title(Some(&snapshot.tray_title()));
-    tray.set_tooltip(Some("Pullbell"))?;
-    tray.set_menu(Some(Box::new(menu)));
 
     Ok(())
 }
@@ -172,7 +207,7 @@ fn append_pr_groups(
 ) -> Result<()> {
     let (todo_count, done_count) = count_pr_groups(items);
 
-    append_disabled(menu, &format!("ToDo ({todo_count})"))?;
+    append_disabled(menu, &format!("To do ({todo_count})"))?;
     if todo_count == 0 {
         append_disabled(menu, "All caught up")?;
     } else {
@@ -202,7 +237,6 @@ fn append_pr_section(
         return Ok(());
     }
 
-    append_disabled(menu, kind.label())?;
     for item in items
         .iter()
         .filter(|item| item.kind == kind)
@@ -211,7 +245,7 @@ fn append_pr_section(
         append_command(
             menu,
             commands,
-            &truncate_menu_label(&item.display_title(), 80),
+            &truncate_menu_label(&neat_item_label(item, Utc::now()), MAX_MENU_LABEL_CHARS),
             AppCommand::OpenUrl(item.url.clone()),
         )?;
     }
@@ -232,6 +266,54 @@ fn count_pr_groups(items: &[PullRequestItem]) -> (usize, usize) {
             (todo, done + 1)
         }
     })
+}
+
+fn neat_item_label(item: &PullRequestItem, now: DateTime<Utc>) -> String {
+    let repo = short_repo_name(&item.repo);
+    let age = item
+        .updated_at
+        .map(|updated_at| relative_age(updated_at, now))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    format!(
+        "{} in {} #{} - {} - {}",
+        activity_label(&item.kind),
+        repo,
+        item.number,
+        age,
+        item.title
+    )
+}
+
+fn activity_label(kind: &PrKind) -> &'static str {
+    match kind {
+        PrKind::ReviewRequested => "Review requested",
+        PrKind::Notification => "Unread notification",
+        PrKind::Authored => "Authored",
+    }
+}
+
+fn short_repo_name(repo: &str) -> &str {
+    repo.rsplit('/').next().unwrap_or(repo)
+}
+
+fn relative_age(updated_at: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    let age = now.signed_duration_since(updated_at);
+    let age = if age < Duration::zero() {
+        Duration::zero()
+    } else {
+        age
+    };
+
+    if age.num_days() >= 1 {
+        format!("{}d", age.num_days())
+    } else if age.num_hours() >= 1 {
+        format!("{}h", age.num_hours())
+    } else if age.num_minutes() >= 1 {
+        format!("{}m", age.num_minutes())
+    } else {
+        "now".to_string()
+    }
 }
 
 pub(super) fn build_tray() -> Result<TrayIcon> {
@@ -264,8 +346,61 @@ fn truncate_menu_label(label: &str, max_chars: usize) -> String {
     if count <= max_chars {
         label.to_string()
     } else {
-        let mut value: String = label.chars().take(max_chars.saturating_sub(1)).collect();
+        let mut value: String = label.chars().take(max_chars.saturating_sub(3)).collect();
         value.push_str("...");
         value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn item(kind: PrKind, updated_at: i64) -> PullRequestItem {
+        PullRequestItem {
+            id: "owner/repo#42".to_string(),
+            repo: "owner/repo".to_string(),
+            title: "Tighten notification layout".to_string(),
+            url: "https://github.com/owner/repo/pull/42".to_string(),
+            number: 42,
+            updated_at: Some(Utc.timestamp_opt(updated_at, 0).unwrap()),
+            kind,
+        }
+    }
+
+    #[test]
+    fn formats_menu_items_like_compact_notification_rows() {
+        let now = Utc.timestamp_opt(7_200, 0).unwrap();
+
+        assert_eq!(
+            neat_item_label(&item(PrKind::ReviewRequested, 0), now),
+            "Review requested in repo #42 - 2h - Tighten notification layout"
+        );
+    }
+
+    #[test]
+    fn relative_age_uses_short_units() {
+        let now = Utc.timestamp_opt(172_800, 0).unwrap();
+
+        assert_eq!(
+            relative_age(Utc.timestamp_opt(172_740, 0).unwrap(), now),
+            "1m"
+        );
+        assert_eq!(
+            relative_age(Utc.timestamp_opt(165_600, 0).unwrap(), now),
+            "2h"
+        );
+        assert_eq!(relative_age(Utc.timestamp_opt(0, 0).unwrap(), now), "2d");
+        assert_eq!(
+            relative_age(Utc.timestamp_opt(172_900, 0).unwrap(), now),
+            "now"
+        );
+    }
+
+    #[test]
+    fn truncates_menu_labels_within_the_requested_width() {
+        assert_eq!(truncate_menu_label("abcdef", 6), "abcdef");
+        assert_eq!(truncate_menu_label("abcdef", 5), "ab...");
     }
 }
