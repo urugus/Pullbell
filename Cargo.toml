@@ -20,6 +20,7 @@ tao = "0.34"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tray-icon = "0.21"
 urlencoding = "2"
+wry = "0.55.1"
 
 [dev-dependencies]
 pretty_assertions = "1"

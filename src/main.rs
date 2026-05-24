@@ -11,14 +11,16 @@ use std::collections::HashMap;
 use std::fs;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tao::event::{Event, StartCause};
+use tao::event::{Event, StartCause, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use tray_icon::menu::{MenuEvent, MenuId};
+use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
 
 mod menu;
 mod notifications;
+mod panel;
 
 use notifications::NotificationTracker;
 
@@ -30,6 +32,7 @@ const DEFAULT_CLIENT_ID: &str = "Ov23liYs8QgtSc19mkZs";
 enum AppEvent {
     StateChanged,
     Notify(PullRequestItem),
+    PanelCommand(String),
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +57,8 @@ fn main() -> Result<()> {
     let client_id = load_client_id();
     let menu_commands = Arc::new(Mutex::new(HashMap::<MenuId, AppCommand>::new()));
     let mut tray = menu::build_tray()?;
+    let initial_snapshot = state.lock().expect("state lock").clone();
+    let mut panel = panel::Panel::new(&event_loop, proxy.clone(), &initial_snapshot)?;
 
     if storage::load_token()?.is_some() {
         state.lock().expect("state lock").token_loaded = true;
@@ -70,12 +75,25 @@ fn main() -> Result<()> {
     menu::rebuild(&mut tray, &state, &menu_commands)?;
 
     let menu_events = MenuEvent::receiver();
+    let tray_events = TrayIconEvent::receiver();
     event_loop.run(move |event, _, control_flow| {
         *control_flow =
             ControlFlow::WaitUntil(std::time::Instant::now() + Duration::from_millis(250));
 
         match event {
             Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
+                while let Ok(tray_event) = tray_events.try_recv() {
+                    if let TrayIconEvent::Click {
+                        rect,
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = tray_event
+                    {
+                        panel.toggle_near(rect);
+                    }
+                }
+
                 while let Ok(menu_event) = menu_events.try_recv() {
                     let command = menu_commands
                         .lock()
@@ -116,6 +134,10 @@ fn main() -> Result<()> {
                 if let Err(error) = menu::rebuild(&mut tray, &state, &menu_commands) {
                     eprintln!("failed to rebuild menu: {error:#}");
                 }
+                let snapshot = state.lock().expect("state lock").clone();
+                if let Err(error) = panel.update(&snapshot) {
+                    eprintln!("failed to update panel: {error:#}");
+                }
             }
             Event::UserEvent(AppEvent::Notify(item)) => {
                 let _ = send_notification(
@@ -125,9 +147,77 @@ fn main() -> Result<()> {
                     None,
                 );
             }
+            Event::UserEvent(AppEvent::PanelCommand(command)) => {
+                if let Some(command) = panel_command(&state, command) {
+                    match command {
+                        AppCommand::OpenUrl(url) => {
+                            let _ = open::that(url);
+                        }
+                        AppCommand::CopySignInCode => {
+                            let code = state
+                                .lock()
+                                .expect("state lock")
+                                .pending_auth
+                                .as_ref()
+                                .map(|auth| auth.user_code.clone());
+
+                            if let (Some(code), Ok(mut clipboard)) =
+                                (code, arboard::Clipboard::new())
+                            {
+                                let _ = clipboard.set_text(code);
+                            }
+                        }
+                        AppCommand::SignOut => {
+                            panel.hide();
+                            let _ = command_tx.send(AppCommand::SignOut);
+                        }
+                        AppCommand::Quit => {
+                            *control_flow = ControlFlow::Exit;
+                        }
+                        other => {
+                            let _ = command_tx.send(other);
+                        }
+                    }
+                }
+            }
+            Event::WindowEvent {
+                window_id,
+                event: WindowEvent::Focused(false),
+                ..
+            } if window_id == panel.window_id() => {
+                panel.hide();
+            }
             _ => {}
         }
     });
+}
+
+fn panel_command(state: &Arc<Mutex<AppState>>, command: String) -> Option<AppCommand> {
+    match command.as_str() {
+        "signin" => Some(AppCommand::SignIn),
+        "copy-signin-code" => Some(AppCommand::CopySignInCode),
+        "refresh" => Some(AppCommand::Refresh),
+        "check-updates" => Some(AppCommand::CheckForUpdates),
+        "update-homebrew" => Some(AppCommand::UpdateWithHomebrew),
+        "signout" => Some(AppCommand::SignOut),
+        "inbox" => Some(AppCommand::OpenUrl(
+            "https://github.com/notifications".to_string(),
+        )),
+        "quit" => Some(AppCommand::Quit),
+        _ => command
+            .strip_prefix("open:")
+            .filter(|url| {
+                url.starts_with("https://github.com/")
+                    || state
+                        .lock()
+                        .expect("state lock")
+                        .pending_auth
+                        .as_ref()
+                        .is_some_and(|auth| auth.verification_uri == *url)
+                    || pullbell::updater::RELEASES_URL == *url
+            })
+            .map(|url| AppCommand::OpenUrl(url.to_string())),
+    }
 }
 
 async fn run_worker(

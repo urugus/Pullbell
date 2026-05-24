@@ -1,0 +1,685 @@
+use super::AppEvent;
+use anyhow::{Context, Result};
+use chrono::{DateTime, Duration, Utc};
+use pullbell::model::{PrKind, PullRequestItem};
+use pullbell::state::AppState;
+use pullbell::updater;
+use tao::dpi::{LogicalSize, PhysicalPosition};
+use tao::event_loop::{EventLoop, EventLoopProxy};
+#[cfg(target_os = "macos")]
+use tao::platform::macos::WindowBuilderExtMacOS;
+use tao::window::{Window, WindowBuilder, WindowId};
+use tray_icon::Rect;
+use wry::{WebView, WebViewBuilder};
+
+const PANEL_WIDTH: f64 = 520.0;
+const PANEL_HEIGHT: f64 = 680.0;
+const MAX_ITEMS_PER_GROUP: usize = 8;
+
+pub(super) struct Panel {
+    window: Window,
+    webview: WebView,
+    visible: bool,
+}
+
+impl Panel {
+    pub(super) fn new(
+        event_loop: &EventLoop<AppEvent>,
+        proxy: EventLoopProxy<AppEvent>,
+        snapshot: &AppState,
+    ) -> Result<Self> {
+        let mut builder = WindowBuilder::new()
+            .with_title("Pullbell")
+            .with_inner_size(LogicalSize::new(PANEL_WIDTH, PANEL_HEIGHT))
+            .with_resizable(false)
+            .with_visible(false)
+            .with_decorations(false)
+            .with_transparent(true)
+            .with_always_on_top(true);
+
+        #[cfg(target_os = "macos")]
+        {
+            builder = builder
+                .with_title_hidden(true)
+                .with_fullsize_content_view(true)
+                .with_has_shadow(true);
+        }
+
+        let window = builder
+            .build(event_loop)
+            .context("building Pullbell panel")?;
+        let html = html(snapshot);
+        let webview = WebViewBuilder::new()
+            .with_transparent(true)
+            .with_html(html)
+            .with_ipc_handler(move |request| {
+                let _ = proxy.send_event(AppEvent::PanelCommand(request.body().clone()));
+            })
+            .build(&window)
+            .context("building Pullbell web view")?;
+
+        Ok(Self {
+            window,
+            webview,
+            visible: false,
+        })
+    }
+
+    pub(super) fn window_id(&self) -> WindowId {
+        self.window.id()
+    }
+
+    pub(super) fn toggle_near(&mut self, rect: Rect) {
+        if self.visible {
+            self.hide();
+        } else {
+            self.show_near(rect);
+        }
+    }
+
+    pub(super) fn hide(&mut self) {
+        self.window.set_visible(false);
+        self.visible = false;
+    }
+
+    pub(super) fn update(&self, snapshot: &AppState) -> Result<()> {
+        let body = render_body(snapshot);
+        let body_json = serde_json::to_string(&body)?;
+        self.webview
+            .evaluate_script(&format!("window.PullbellRender({body_json});"))
+            .context("updating Pullbell panel")
+    }
+
+    fn show_near(&mut self, rect: Rect) {
+        let x = (rect.position.x + f64::from(rect.size.width) - PANEL_WIDTH + 16.0).max(8.0);
+        let y = rect.position.y + f64::from(rect.size.height) + 8.0;
+
+        self.window
+            .set_outer_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
+        self.window.set_visible(true);
+        self.window.set_focus();
+        self.visible = true;
+    }
+}
+
+fn html(snapshot: &AppState) -> String {
+    format!(
+        r#"<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+* {{ box-sizing: border-box; }}
+:root {{
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  background: transparent;
+}}
+html, body {{
+  margin: 0;
+  width: 100%;
+  min-height: 100%;
+  overflow: hidden;
+  background: transparent;
+}}
+body {{
+  padding: 10px;
+  color: #f4f5f6;
+  font-size: 13px;
+  line-height: 1.35;
+  letter-spacing: 0;
+}}
+button {{
+  font: inherit;
+  letter-spacing: 0;
+}}
+.panel {{
+  width: 500px;
+  height: 660px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 18px;
+  background: #1d1f23;
+  box-shadow: 0 22px 70px rgba(0,0,0,.48), 0 2px 12px rgba(0,0,0,.34);
+}}
+.shell {{
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100%;
+}}
+.topbar {{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 16px 10px;
+  border-bottom: 1px solid rgba(255,255,255,.07);
+}}
+.brand {{
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 10px;
+}}
+.mark {{
+  width: 25px;
+  height: 25px;
+  border-radius: 8px;
+  background: linear-gradient(145deg, #f7f7f8 0%, #a9adb7 100%);
+  color: #16181c;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+}}
+.brand-text {{
+  min-width: 0;
+}}
+.name {{
+  font-size: 15px;
+  font-weight: 650;
+}}
+.subtle {{
+  color: #9ba0aa;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}}
+.counter {{
+  min-width: 34px;
+  height: 24px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: #f7f8fb;
+  color: #17191d;
+  font-size: 12px;
+  font-weight: 700;
+}}
+.content {{
+  overflow: auto;
+  padding: 8px 8px 12px;
+}}
+.section {{
+  padding: 8px 6px 2px;
+}}
+.heading {{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 8px 6px;
+  color: #7f8490;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}}
+.heading span:last-child {{
+  color: #606672;
+}}
+.row {{
+  width: 100%;
+  min-height: 62px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: default;
+}}
+.row:hover {{
+  background: #2c3036;
+}}
+.row:active {{
+  background: #343940;
+}}
+.row.selected {{
+  background: #313640;
+}}
+.badge {{
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 800;
+  color: #f7f8fb;
+}}
+.badge.review {{ background: #8268ff; }}
+.badge.notify {{ background: #26a0dc; }}
+.badge.authored {{ background: #4f5966; }}
+.main {{
+  min-width: 0;
+}}
+.meta {{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #9ca1ac;
+  font-size: 11px;
+}}
+.repo {{
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}}
+.dot {{
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: #656b76;
+  flex: 0 0 auto;
+}}
+.title {{
+  margin-top: 3px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #f0f1f3;
+  font-size: 13px;
+  font-weight: 540;
+}}
+.age {{
+  align-self: start;
+  padding-top: 2px;
+  color: #7a808b;
+  font-size: 11px;
+  white-space: nowrap;
+}}
+.empty {{
+  margin: 2px 8px 8px;
+  padding: 14px 12px;
+  border-radius: 10px;
+  color: #8d939f;
+  background: rgba(255,255,255,.035);
+}}
+.pinned {{
+  margin: 2px 8px 8px;
+  padding: 11px 12px;
+  border-radius: 10px;
+  background: #282c33;
+  border: 1px solid rgba(255,255,255,.07);
+}}
+.pinned-title {{
+  font-weight: 650;
+  color: #f2f3f5;
+}}
+.pinned-body {{
+  margin-top: 3px;
+  color: #a8adb8;
+  font-size: 12px;
+}}
+.code {{
+  margin-top: 8px;
+  width: max-content;
+  max-width: 100%;
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: #15171b;
+  color: #ffffff;
+  font-weight: 800;
+  letter-spacing: .08em;
+}}
+.footer {{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid rgba(255,255,255,.08);
+  background: rgba(22,24,28,.84);
+}}
+.tool {{
+  height: 30px;
+  min-width: 30px;
+  border: 0;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  padding: 0 9px;
+  color: #d7dae0;
+  background: transparent;
+}}
+.tool:hover {{
+  background: #30343b;
+  color: #ffffff;
+}}
+.tool.primary {{
+  min-width: 72px;
+  background: #f4f5f7;
+  color: #17191d;
+  font-weight: 700;
+}}
+.spacer {{ flex: 1; }}
+</style>
+</head>
+<body>
+<div class="panel"><div id="app" class="shell">{}</div></div>
+<script>
+window.send = function(message) {{ window.ipc.postMessage(message); }};
+window.PullbellRender = function(html) {{ document.getElementById("app").innerHTML = html; }};
+</script>
+</body>
+</html>"#,
+        render_body(snapshot)
+    )
+}
+
+fn render_body(snapshot: &AppState) -> String {
+    let mut html = String::new();
+    let (todo_count, done_count) = snapshot.todo_done_counts();
+
+    html.push_str(&render_topbar(snapshot, todo_count));
+    html.push_str(r#"<main class="content">"#);
+    html.push_str(&render_pinned(snapshot));
+    html.push_str(&render_section(
+        "To do",
+        todo_count,
+        snapshot
+            .pull_requests
+            .iter()
+            .filter(|item| item.kind.is_todo()),
+        "All caught up",
+    ));
+    html.push_str(&render_section(
+        "Done",
+        done_count,
+        snapshot
+            .pull_requests
+            .iter()
+            .filter(|item| item.kind == PrKind::Authored),
+        "No open PRs being tracked",
+    ));
+    html.push_str("</main>");
+    html.push_str(&render_footer(snapshot));
+    html
+}
+
+fn render_topbar(snapshot: &AppState, todo_count: usize) -> String {
+    let status = if let Some(login) = &snapshot.signed_in_as {
+        format!("Signed in as {}", escape_html(login))
+    } else if snapshot.token_loaded {
+        "Signed in".to_string()
+    } else {
+        "Not signed in".to_string()
+    };
+
+    format!(
+        r#"<header class="topbar"><div class="brand"><div class="mark">P</div><div class="brand-text"><div class="name">Pullbell</div><div class="subtle">{} · v{}</div></div></div><div class="counter">{}</div></header>"#,
+        status,
+        env!("CARGO_PKG_VERSION"),
+        todo_count
+    )
+}
+
+fn render_pinned(snapshot: &AppState) -> String {
+    let mut html = String::from(
+        r#"<section class="section"><div class="heading"><span>Pinned</span><span></span></div>"#,
+    );
+
+    if let Some(auth) = &snapshot.pending_auth {
+        html.push_str(&format!(
+            r#"<div class="pinned"><div class="pinned-title">GitHub sign-in is waiting</div><div class="pinned-body">Enter this code on GitHub. It was copied to the clipboard.</div><div class="code">{}</div></div>"#,
+            escape_html(&auth.user_code)
+        ));
+    } else if let Some(update) = &snapshot.available_update {
+        html.push_str(&format!(
+            r#"<div class="pinned"><div class="pinned-title">Update available: v{}</div><div class="pinned-body">A newer Pullbell release is ready.</div></div>"#,
+            escape_html(&update.latest_version)
+        ));
+    } else if let Some(status) = &snapshot.update_status {
+        html.push_str(&format!(
+            r#"<div class="pinned"><div class="pinned-title">Update status</div><div class="pinned-body">{}</div></div>"#,
+            escape_html(status)
+        ));
+    } else if snapshot.is_checking_updates {
+        html.push_str(
+            r#"<div class="pinned"><div class="pinned-title">Checking for updates</div><div class="pinned-body">Pullbell is checking the latest release.</div></div>"#,
+        );
+    } else if let Some(error) = &snapshot.last_error {
+        html.push_str(&format!(
+            r#"<div class="pinned"><div class="pinned-title">Needs attention</div><div class="pinned-body">{}</div></div>"#,
+            escape_html(error)
+        ));
+    } else if let Some(refreshed_at) = snapshot.last_refreshed_at {
+        html.push_str(&format!(
+            r#"<div class="pinned"><div class="pinned-title">Ready</div><div class="pinned-body">Last refreshed at {}</div></div>"#,
+            refreshed_at.format("%H:%M:%S")
+        ));
+    } else if snapshot.token_loaded {
+        html.push_str(
+            r#"<div class="pinned"><div class="pinned-title">Ready</div><div class="pinned-body">Pullbell is watching your GitHub pull requests.</div></div>"#,
+        );
+    } else {
+        html.push_str(
+            r#"<div class="pinned"><div class="pinned-title">Sign in to start</div><div class="pinned-body">Connect GitHub to watch pull request activity.</div></div>"#,
+        );
+    }
+
+    html.push_str("</section>");
+    html
+}
+
+fn render_section<'a>(
+    label: &str,
+    count: usize,
+    items: impl Iterator<Item = &'a PullRequestItem>,
+    empty: &str,
+) -> String {
+    let mut html = format!(
+        r#"<section class="section"><div class="heading"><span>{}</span><span>{}</span></div>"#,
+        escape_html(label),
+        count
+    );
+    let items: Vec<_> = items.take(MAX_ITEMS_PER_GROUP + 1).collect();
+
+    if items.is_empty() {
+        html.push_str(&format!(
+            r#"<div class="empty">{}</div>"#,
+            escape_html(empty)
+        ));
+    } else {
+        let now = Utc::now();
+        for item in items.iter().take(MAX_ITEMS_PER_GROUP) {
+            html.push_str(&render_item(item, now));
+        }
+
+        if count > MAX_ITEMS_PER_GROUP {
+            html.push_str(&format!(
+                r#"<div class="empty">...and {} more</div>"#,
+                count - MAX_ITEMS_PER_GROUP
+            ));
+        }
+    }
+
+    html.push_str("</section>");
+    html
+}
+
+fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
+    let (badge_class, badge_text, label) = match item.kind {
+        PrKind::ReviewRequested => ("review", "R", "Review requested"),
+        PrKind::Notification => ("notify", "N", "Unread notification"),
+        PrKind::Authored => ("authored", "A", "Authored"),
+    };
+    let repo = short_repo_name(&item.repo);
+    let age = item
+        .updated_at
+        .map(|updated_at| relative_age(updated_at, now))
+        .unwrap_or_else(|| "unknown".to_string());
+    let command = format!("open:{}", item.url);
+
+    format!(
+        r#"<button class="row" data-cmd="{}" onclick="send(this.dataset.cmd)"><div class="badge {}">{}</div><div class="main"><div class="meta"><span class="repo">{}</span><span class="dot"></span><span>#{}</span><span class="dot"></span><span>{}</span></div><div class="title">{}</div></div><div class="age">{}</div></button>"#,
+        escape_attr(&command),
+        badge_class,
+        badge_text,
+        escape_html(repo),
+        item.number,
+        escape_html(label),
+        escape_html(&item.title),
+        escape_html(&age)
+    )
+}
+
+fn render_footer(snapshot: &AppState) -> String {
+    let refresh_label = if snapshot.is_refreshing {
+        "Refreshing"
+    } else {
+        "Refresh"
+    };
+    let mut html = format!(
+        r#"<footer class="footer"><button class="tool primary" onclick="send('refresh')">{}</button><button class="tool" title="Open GitHub inbox" onclick="send('inbox')">Inbox</button>"#,
+        refresh_label
+    );
+
+    if !snapshot.token_loaded && snapshot.pending_auth.is_none() {
+        html.push_str(r#"<button class="tool" onclick="send('signin')">Sign in</button>"#);
+    }
+
+    if let Some(auth) = &snapshot.pending_auth {
+        html.push_str(&format!(
+            r#"<button class="tool" data-cmd="open:{}" onclick="send(this.dataset.cmd)">GitHub</button><button class="tool" onclick="send('copy-signin-code')">Copy</button>"#,
+            escape_attr(&auth.verification_uri)
+        ));
+    }
+
+    if let Some(update) = &snapshot.available_update {
+        if snapshot.homebrew_cask_installed {
+            html.push_str(
+                r#"<button class="tool" onclick="send('update-homebrew')">Update</button>"#,
+            );
+        }
+        html.push_str(&format!(
+            r#"<button class="tool" data-cmd="open:{}" onclick="send(this.dataset.cmd)">Release</button>"#,
+            escape_attr(&update.release_url)
+        ));
+    } else {
+        html.push_str(r#"<button class="tool" onclick="send('check-updates')">Updates</button>"#);
+        html.push_str(&format!(
+            r#"<button class="tool" data-cmd="open:{}" onclick="send(this.dataset.cmd)">Release</button>"#,
+            escape_attr(updater::RELEASES_URL)
+        ));
+    }
+
+    html.push_str(r#"<div class="spacer"></div>"#);
+    if snapshot.token_loaded {
+        html.push_str(r#"<button class="tool" onclick="send('signout')">Sign out</button>"#);
+    }
+    html.push_str(r#"<button class="tool" onclick="send('quit')">Quit</button></footer>"#);
+    html
+}
+
+fn short_repo_name(repo: &str) -> &str {
+    repo.rsplit('/').next().unwrap_or(repo)
+}
+
+fn relative_age(updated_at: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    let age = now.signed_duration_since(updated_at);
+    let age = if age < Duration::zero() {
+        Duration::zero()
+    } else {
+        age
+    };
+
+    if age.num_days() >= 1 {
+        format!("{}d", age.num_days())
+    } else if age.num_hours() >= 1 {
+        format!("{}h", age.num_hours())
+    } else if age.num_minutes() >= 1 {
+        format!("{}m", age.num_minutes())
+    } else {
+        "now".to_string()
+    }
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn escape_attr(value: &str) -> String {
+    escape_html(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn item(kind: PrKind) -> PullRequestItem {
+        PullRequestItem {
+            id: "owner/repo#42".to_string(),
+            repo: "owner/repo".to_string(),
+            title: "Tighten notification layout".to_string(),
+            url: "https://github.com/owner/repo/pull/42".to_string(),
+            number: 42,
+            updated_at: Some(Utc.timestamp_opt(7_200, 0).unwrap()),
+            kind,
+        }
+    }
+
+    #[test]
+    fn renders_neat_like_sections_and_rows() {
+        let snapshot = AppState {
+            token_loaded: true,
+            signed_in_as: Some("octo".to_string()),
+            pull_requests: vec![
+                item(PrKind::ReviewRequested),
+                item(PrKind::Notification),
+                item(PrKind::Authored),
+            ],
+            ..Default::default()
+        };
+
+        let body = render_body(&snapshot);
+
+        assert!(body.contains(">Pinned<"));
+        assert!(body.contains(">To do<"));
+        assert!(body.contains(">Done<"));
+        assert!(body.contains("Review requested"));
+        assert!(body.contains("Unread notification"));
+        assert!(body.contains("Authored"));
+        assert!(body.contains("data-cmd=\"open:https://github.com/owner/repo/pull/42\""));
+    }
+
+    #[test]
+    fn escapes_dynamic_content() {
+        let snapshot = AppState {
+            last_error: Some("<script>alert('x')</script>".to_string()),
+            ..Default::default()
+        };
+
+        let body = render_body(&snapshot);
+
+        assert!(body.contains("&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;"));
+        assert!(!body.contains("<script>alert"));
+    }
+
+    #[test]
+    fn relative_age_uses_short_units() {
+        let now = Utc.timestamp_opt(172_800, 0).unwrap();
+
+        assert_eq!(
+            relative_age(Utc.timestamp_opt(172_740, 0).unwrap(), now),
+            "1m"
+        );
+        assert_eq!(
+            relative_age(Utc.timestamp_opt(165_600, 0).unwrap(), now),
+            "2h"
+        );
+        assert_eq!(relative_age(Utc.timestamp_opt(0, 0).unwrap(), now), "2d");
+    }
+}

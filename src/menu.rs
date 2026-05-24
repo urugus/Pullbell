@@ -322,6 +322,7 @@ pub(super) fn build_tray() -> Result<TrayIcon> {
         .with_icon(build_icon()?)
         .with_title("PR")
         .with_tooltip("Pullbell")
+        .with_menu_on_left_click(false)
         .build()
         .context("building macOS menu bar icon")
 }
