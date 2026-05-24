@@ -31,8 +31,13 @@ cask "pullbell" do
   desc "macOS menu bar app for GitHub pull request notifications"
   homepage "https://github.com/urugus/Pullbell"
 
+  depends_on macos: ">= :monterey"
+
   app "Pullbell.app"
 
-  depends_on macos: ">= :monterey"
+  postflight do
+    system_command "/usr/bin/xattr",
+                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Pullbell.app"]
+  end
 end
 CASK
