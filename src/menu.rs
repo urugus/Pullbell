@@ -237,6 +237,7 @@ fn append_pr_section(
         return Ok(());
     }
 
+    let now = Utc::now();
     for item in items
         .iter()
         .filter(|item| item.kind == kind)
@@ -245,7 +246,7 @@ fn append_pr_section(
         append_command(
             menu,
             commands,
-            &truncate_menu_label(&neat_item_label(item, Utc::now()), MAX_MENU_LABEL_CHARS),
+            &truncate_menu_label(&neat_item_label(item, now), MAX_MENU_LABEL_CHARS),
             AppCommand::OpenUrl(item.url.clone()),
         )?;
     }
@@ -345,6 +346,8 @@ fn truncate_menu_label(label: &str, max_chars: usize) -> String {
     let count = label.chars().count();
     if count <= max_chars {
         label.to_string()
+    } else if max_chars <= 3 {
+        "...".chars().take(max_chars).collect()
     } else {
         let mut value: String = label.chars().take(max_chars.saturating_sub(3)).collect();
         value.push_str("...");
@@ -402,5 +405,9 @@ mod tests {
     fn truncates_menu_labels_within_the_requested_width() {
         assert_eq!(truncate_menu_label("abcdef", 6), "abcdef");
         assert_eq!(truncate_menu_label("abcdef", 5), "ab...");
+        assert_eq!(truncate_menu_label("abcdef", 3), "...");
+        assert_eq!(truncate_menu_label("abcdef", 2), "..");
+        assert_eq!(truncate_menu_label("abcdef", 1), ".");
+        assert_eq!(truncate_menu_label("abcdef", 0), "");
     }
 }
