@@ -9,6 +9,16 @@ format and must match the version in `Cargo.toml`.
 
 Nothing yet.
 
+## 0.5.0
+
+- Added a Neat-inspired keyboard-first panel workflow with row selection,
+  Space preview, and repository/reason/user filters.
+- Added keyboard shortcuts for opening, refreshing, hiding, quitting, marking
+  GitHub notification threads done, and muting notification threads.
+- Added GitHub notification thread actions using the notifications API.
+- Added pull request preview metadata from GitHub search results and recent
+  notification-backed PRs.
+
 ## 0.4.2
 
 - Added Homebrew Formula generation so users can install Pullbell by building
