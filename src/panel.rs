@@ -892,7 +892,7 @@ fn render_muted_chips(snapshot: &AppState) -> String {
             .iter()
             .flat_map(|item| {
                 [
-                    Some(short_repo_name(&item.repo).to_string()),
+                    Some(item.repo.clone()),
                     Some(reason_label(item)),
                     item.author.clone(),
                 ]
@@ -1183,7 +1183,7 @@ fn render_footer(snapshot: &AppState) -> String {
         html.push_str(r#"<button class="tool" onclick="send('signout')">Sign out</button>"#);
     }
     html.push_str(&format!(
-        r#"<button class="tool icon" data-open-settings type="button" title="Settings" aria-label="Open settings" aria-expanded="false" onclick="window.PullbellShowSettings()">{}</button>"#,
+        r#"<button class="tool icon" data-open-settings type="button" title="Settings" aria-label="Open settings" aria-controls="settings-view" aria-expanded="false" onclick="window.PullbellShowSettings()">{}</button>"#,
         settings_icon()
     ));
     html.push_str(r#"<button class="tool" onclick="send('quit')">Quit</button></footer>"#);
@@ -1351,6 +1351,7 @@ mod tests {
         let body = render_body(&snapshot);
 
         assert!(body.contains("aria-label=\"Open settings\""));
+        assert!(body.contains("aria-controls=\"settings-view\""));
         assert!(body.contains("data-open-settings"));
         assert!(body.contains("id=\"settings-view\""));
         assert!(body.contains("data-panel-view=\"settings\""));
@@ -1363,6 +1364,31 @@ mod tests {
         assert!(body.matches("data-filter=\"repo\"").count() >= 2);
         assert!(body.matches("data-filter=\"reason\"").count() >= 2);
         assert!(body.matches("data-filter=\"author\"").count() >= 2);
+    }
+
+    #[test]
+    fn muted_chips_preserve_distinct_repositories_with_same_short_name() {
+        let snapshot = AppState {
+            pull_requests: vec![
+                PullRequestItem {
+                    repo: "org-a/api".to_string(),
+                    author: None,
+                    reason: None,
+                    ..item(PrKind::ReviewRequested)
+                },
+                PullRequestItem {
+                    repo: "org-b/api".to_string(),
+                    author: None,
+                    reason: None,
+                    ..item(PrKind::Notification)
+                },
+            ],
+            ..Default::default()
+        };
+
+        let chips = render_muted_chips(&snapshot);
+
+        assert_eq!(chips.matches(">api</span>").count(), 2);
     }
 
     #[test]
