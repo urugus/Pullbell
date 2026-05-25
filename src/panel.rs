@@ -569,7 +569,8 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
 
   document.addEventListener("keydown", function(event) {{
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
-    if (event.target && /^(BUTTON|SELECT|INPUT|TEXTAREA)$/.test(event.target.tagName)) return;
+    if (event.target && /^(SELECT|INPUT|TEXTAREA)$/.test(event.target.tagName)) return;
+    if (event.target && event.target.tagName === "BUTTON" && event.target.dataset.selectable !== "true") return;
 
     const key = event.key.toLowerCase();
     if (key === "j" || event.key === "ArrowDown") {{
@@ -1056,7 +1057,11 @@ mod tests {
         assert!(markup.contains("window.PullbellActOnSelected"));
         assert!(markup.contains("window.PullbellTogglePreview"));
         assert!(markup.contains("ArrowDown"));
-        assert!(markup.contains("BUTTON|SELECT|INPUT|TEXTAREA"));
+        assert!(
+            markup.contains("event.target.dataset.selectable !== &quot;true&quot;")
+                || markup.contains("event.target.dataset.selectable !== \"true\"")
+        );
+        assert!(markup.contains("^(SELECT|INPUT|TEXTAREA)$"));
         assert!(
             markup.contains("event.key === &quot; &quot;")
                 || markup.contains(r#"event.key === " ""#)
