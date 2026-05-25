@@ -9,6 +9,17 @@ format and must match the version in `Cargo.toml`.
 
 Nothing yet.
 
+## 0.6.0
+
+- Added a Neat-inspired in-panel settings entrypoint with a gear control,
+  settings view navigation, and back navigation.
+- Added a Controls view with a non-persisted Group by Repository preview toggle,
+  mirrored focus filters, and muted-target chips.
+- Scoped notification keyboard shortcuts to the notification view while keeping
+  Escape behavior safe for focused form controls.
+- Preserved distinct repository identities in settings muted-target chips and
+  improved settings button accessibility.
+
 ## 0.5.0
 
 - Added a Neat-inspired keyboard-first panel workflow with row selection,
