@@ -466,6 +466,7 @@ button {{
   border: 0;
   border-radius: 999px;
   background: #3a404a;
+  transition: background .14s ease-out;
 }}
 .switch::after {{
   content: "";
@@ -477,6 +478,14 @@ button {{
   border-radius: 999px;
   background: #cfd3da;
   box-shadow: 0 1px 3px rgba(0,0,0,.35);
+  transition: transform .14s ease-out, background .14s ease-out;
+}}
+.switch.on {{
+  background: #3f8cff;
+}}
+.switch.on::after {{
+  background: #ffffff;
+  transform: translateX(18px);
 }}
 .settings-filters {{
   display: grid;
@@ -578,6 +587,7 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
   let filters = {{ repo: "", reason: "", author: "" }};
   let previewOpen = false;
   let currentView = "notifications";
+  let groupByRepository = false;
 
   function selectableRows() {{
     return Array.from(document.querySelectorAll("[data-selectable='true']"));
@@ -671,6 +681,18 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
     window.PullbellSetView("notifications");
   }};
 
+  window.PullbellSyncGroupByRepository = function() {{
+    document.querySelectorAll("[data-group-by-repository]").forEach(function(control) {{
+      control.classList.toggle("on", groupByRepository);
+      control.setAttribute("aria-pressed", groupByRepository ? "true" : "false");
+    }});
+  }};
+
+  window.PullbellToggleGroupByRepository = function() {{
+    groupByRepository = !groupByRepository;
+    window.PullbellSyncGroupByRepository();
+  }};
+
   function syncFilterControls() {{
     Object.keys(filters).forEach(function(name) {{
       const controls = Array.from(document.querySelectorAll("[data-filter='" + name + "']"));
@@ -703,6 +725,7 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
     syncFilterControls();
     window.PullbellApplyFilters();
     window.PullbellSetView(currentView);
+    window.PullbellSyncGroupByRepository();
     if (previewOpen) window.PullbellShowPreview();
   }};
 
@@ -717,6 +740,7 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
 
   document.addEventListener("keydown", function(event) {{
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.target && /^(SELECT|INPUT|TEXTAREA)$/.test(event.target.tagName)) return;
     const key = event.key.toLowerCase();
     if (key === "escape") {{
       event.preventDefault();
@@ -731,7 +755,6 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
       window.send("hide");
       return;
     }}
-    if (event.target && /^(SELECT|INPUT|TEXTAREA)$/.test(event.target.tagName)) return;
     if (event.target && event.target.tagName === "BUTTON" && event.target.dataset.selectable !== "true") return;
     if (currentView !== "notifications") return;
 
@@ -767,6 +790,7 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
 
   syncFilterControls();
   window.PullbellApplyFilters();
+  window.PullbellSyncGroupByRepository();
 }})();
 </script>
 </body>
@@ -854,7 +878,7 @@ fn render_filter_controls(snapshot: &AppState) -> String {
 
 fn render_settings(snapshot: &AppState) -> String {
     format!(
-        r#"<main id="settings-view" class="content view settings" data-panel-view="settings"><div class="settings-head"><button class="tool icon" title="Back to notifications" aria-label="Back to notifications" onclick="window.PullbellShowNotifications()">{}</button><div><div class="settings-title">Controls</div><div class="settings-subtitle">Tune which pull request notifications stay in focus.</div></div></div><div class="settings-body"><section class="settings-section"><div class="settings-label">View</div><div class="setting-row"><div><div class="setting-name">Group by Repository</div><div class="setting-note">Preview control only. The notification list keeps the current order.</div></div><button class="switch" type="button" aria-label="Group by Repository" aria-pressed="false"></button></div></section><section class="settings-section"><div class="settings-label">Focus filters</div><div class="setting-note">These controls mirror the notification list filters.</div><div class="settings-filters">{}</div></section><section class="settings-section"><div class="settings-label">Muted</div><div class="setting-note">Available repositories, reasons, and users you can filter out for this session.</div>{}</section></div></main>"#,
+        r#"<main id="settings-view" class="content view settings" data-panel-view="settings"><div class="settings-head"><button class="tool icon" title="Back to notifications" aria-label="Back to notifications" onclick="window.PullbellShowNotifications()">{}</button><div><div class="settings-title">Controls</div><div class="settings-subtitle">Tune which pull request notifications stay in focus.</div></div></div><div class="settings-body"><section class="settings-section"><div class="settings-label">View</div><div class="setting-row"><div><div class="setting-name">Group by Repository</div><div class="setting-note">Preview control only. The notification list keeps the current order.</div></div><button class="switch" type="button" data-group-by-repository aria-label="Group by Repository" aria-pressed="false" onclick="window.PullbellToggleGroupByRepository()"></button></div></section><section class="settings-section"><div class="settings-label">Focus filters</div><div class="setting-note">These controls mirror the notification list filters.</div><div class="settings-filters">{}</div></section><section class="settings-section"><div class="settings-label">Muted</div><div class="setting-note">Available repositories, reasons, and users you can filter out for this session.</div>{}</section></div></main>"#,
         back_icon(),
         render_filter_controls(snapshot),
         render_muted_chips(snapshot)
@@ -1283,6 +1307,8 @@ mod tests {
         assert!(markup.contains("window.PullbellTogglePreview"));
         assert!(markup.contains("window.PullbellShowSettings"));
         assert!(markup.contains("window.PullbellShowNotifications"));
+        assert!(markup.contains("window.PullbellToggleGroupByRepository"));
+        assert!(markup.contains("window.PullbellSyncGroupByRepository"));
         assert!(markup.contains("ArrowDown"));
         assert!(
             markup.contains("currentView !== &quot;notifications&quot;")
@@ -1306,6 +1332,12 @@ mod tests {
         assert!(markup.contains("window.send(\"refresh\")"));
         assert!(markup.contains("window.send(\"inbox\")"));
         assert!(markup.contains("window.send(\"hide\")"));
+
+        let form_guard = markup
+            .find("SELECT|INPUT|TEXTAREA")
+            .expect("form-control keyboard guard");
+        let escape_handler = markup.find("key === \"escape\"").expect("escape handler");
+        assert!(form_guard < escape_handler);
     }
 
     #[test]
@@ -1325,6 +1357,8 @@ mod tests {
         assert!(body.contains("aria-label=\"Back to notifications\""));
         assert!(body.contains(">Controls<"));
         assert!(body.contains(">Group by Repository<"));
+        assert!(body.contains("data-group-by-repository"));
+        assert!(body.contains("onclick=\"window.PullbellToggleGroupByRepository()\""));
         assert!(body.contains(">Muted<"));
         assert!(body.matches("data-filter=\"repo\"").count() >= 2);
         assert!(body.matches("data-filter=\"reason\"").count() >= 2);
