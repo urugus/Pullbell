@@ -569,7 +569,7 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
 
   document.addEventListener("keydown", function(event) {{
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
-    if (event.target && /^(SELECT|INPUT|TEXTAREA)$/.test(event.target.tagName)) return;
+    if (event.target && /^(BUTTON|SELECT|INPUT|TEXTAREA)$/.test(event.target.tagName)) return;
 
     const key = event.key.toLowerCase();
     if (key === "j" || event.key === "ArrowDown") {{
@@ -734,6 +734,11 @@ fn render_pinned(snapshot: &AppState) -> String {
             r#"<div class="pinned"><div class="pinned-title">Update status</div><div class="pinned-body">{}</div></div>"#,
             escape_html(status)
         ));
+    } else if let Some(status) = &snapshot.last_status {
+        html.push_str(&format!(
+            r#"<div class="pinned"><div class="pinned-title">Status</div><div class="pinned-body">{}</div></div>"#,
+            escape_html(status)
+        ));
     } else if snapshot.is_checking_updates {
         html.push_str(
             r#"<div class="pinned"><div class="pinned-title">Checking for updates</div><div class="pinned-body">Pullbell is checking the latest release.</div></div>"#,
@@ -891,7 +896,7 @@ fn short_filter_value(value: &str) -> &str {
 fn notification_action_attr(name: &str, action: &str, item: &PullRequestItem) -> String {
     item.notification_thread_id
         .as_ref()
-        .map(|thread_id| format!(r#" {name}="{action}:{}""#, escape_attr(thread_id)))
+        .map(|thread_id| format!(" {name}=\"{action}:{}\"", escape_attr(thread_id)))
         .unwrap_or_default()
 }
 
@@ -944,7 +949,7 @@ fn render_footer(snapshot: &AppState) -> String {
 }
 
 fn render_preview() -> String {
-    r#"<aside id="preview" class="preview"><div class="preview-head"><div><div id="preview-title" class="preview-title"></div><div id="preview-meta" class="preview-meta"></div></div><button class="preview-close" onclick="window.PullbellHidePreview()" title="Close preview">x</button></div><div id="preview-body" class="preview-body"></div></aside>"#.to_string()
+    r#"<aside id="preview" class="preview"><div class="preview-head"><div><div id="preview-title" class="preview-title"></div><div id="preview-meta" class="preview-meta"></div></div><button class="preview-close" onclick="window.PullbellHidePreview()" title="Close preview" aria-label="Close preview">x</button></div><div id="preview-body" class="preview-body"></div></aside>"#.to_string()
 }
 
 fn short_repo_name(repo: &str) -> &str {
@@ -1051,6 +1056,7 @@ mod tests {
         assert!(markup.contains("window.PullbellActOnSelected"));
         assert!(markup.contains("window.PullbellTogglePreview"));
         assert!(markup.contains("ArrowDown"));
+        assert!(markup.contains("BUTTON|SELECT|INPUT|TEXTAREA"));
         assert!(
             markup.contains("event.key === &quot; &quot;")
                 || markup.contains(r#"event.key === " ""#)
@@ -1080,6 +1086,7 @@ mod tests {
             "data-preview-body=\"Review the updated notification layout before merging.\""
         ));
         assert!(body.contains("id=\"preview\""));
+        assert!(body.contains("aria-label=\"Close preview\""));
     }
 
     #[test]
@@ -1088,6 +1095,7 @@ mod tests {
 
         assert!(row.contains("data-done-cmd=\"done:thread-42\""));
         assert!(row.contains("data-mute-cmd=\"mute:thread-42\""));
+        assert!(!row.contains("thread-42\"\""));
     }
 
     #[test]

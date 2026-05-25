@@ -474,6 +474,7 @@ async fn refresh(
         let mut guard = state.lock().expect("state lock");
         guard.is_refreshing = true;
         guard.last_error = None;
+        guard.last_status = None;
     }
     let _ = proxy.send_event(AppEvent::StateChanged);
 
@@ -529,7 +530,8 @@ async fn act_on_notification_thread(
 
     {
         let mut guard = state.lock().expect("state lock");
-        guard.last_error = Some(format!("{} notification...", action.label()));
+        guard.last_error = None;
+        guard.last_status = Some(format!("{} notification...", action.label()));
     }
     let _ = proxy.send_event(AppEvent::StateChanged);
 
@@ -541,11 +543,12 @@ async fn act_on_notification_thread(
 
     match result {
         Ok(()) => {
+            refresh(state, proxy, notification_tracker, Some(token)).await;
             {
                 let mut guard = state.lock().expect("state lock");
-                guard.last_error = Some(format!("{} notification", action.label()));
+                guard.last_status = Some(format!("{} notification", action.label()));
             }
-            refresh(state, proxy, notification_tracker, Some(token)).await;
+            let _ = proxy.send_event(AppEvent::StateChanged);
         }
         Err(error) => {
             set_error(state, format!("{error:#}"));
@@ -604,7 +607,9 @@ fn start_homebrew_update(state: &Arc<Mutex<AppState>>, proxy: &EventLoopProxy<Ap
 }
 
 fn clear_error(state: &Arc<Mutex<AppState>>) {
-    state.lock().expect("state lock").last_error = None;
+    let mut guard = state.lock().expect("state lock");
+    guard.last_error = None;
+    guard.last_status = None;
 }
 
 fn set_error(state: &Arc<Mutex<AppState>>, error: String) {
@@ -612,6 +617,7 @@ fn set_error(state: &Arc<Mutex<AppState>>, error: String) {
     guard.is_refreshing = false;
     guard.pending_auth = None;
     guard.last_error = Some(error);
+    guard.last_status = None;
 }
 
 fn load_client_id() -> Option<String> {

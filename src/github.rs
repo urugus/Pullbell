@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 const API_VERSION: &str = "2022-11-28";
 const USER_AGENT: &str = concat!("pullbell/", env!("CARGO_PKG_VERSION"));
+const MAX_NOTIFICATION_PREVIEWS: usize = 12;
 
 #[derive(Clone)]
 pub struct GitHubClient {
@@ -194,9 +195,10 @@ impl GitHubClient {
             .context("decoding GitHub notifications response")?;
 
         let mut items = Vec::new();
-        for notification in notifications
+        for (index, notification) in notifications
             .into_iter()
             .filter(|notification| notification.subject.kind == "PullRequest")
+            .enumerate()
         {
             let Some(api_url) = notification.subject.url.as_deref() else {
                 continue;
@@ -208,10 +210,16 @@ impl GitHubClient {
             else {
                 continue;
             };
-            let details = self
-                .pull_request_preview(api_url, notification.subject.latest_comment_url.as_deref())
+            let details = if index < MAX_NOTIFICATION_PREVIEWS {
+                self.pull_request_preview(
+                    api_url,
+                    notification.subject.latest_comment_url.as_deref(),
+                )
                 .await
-                .unwrap_or_default();
+                .unwrap_or_default()
+            } else {
+                PreviewDetails::default()
+            };
             let url = details.html_url.unwrap_or_else(|| {
                 api_url
                     .replace("https://api.github.com/repos/", "https://github.com/")
