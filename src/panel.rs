@@ -1061,6 +1061,7 @@ mod tests {
             markup.contains("event.target.dataset.selectable !== &quot;true&quot;")
                 || markup.contains("event.target.dataset.selectable !== \"true\"")
         );
+        assert!(markup.contains("^(SELECT|INPUT|TEXTAREA)$"));
         assert!(
             markup.contains("event.key === &quot; &quot;")
                 || markup.contains(r#"event.key === " ""#)
