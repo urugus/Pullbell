@@ -68,6 +68,10 @@ mod tests {
             number: id.parse().unwrap_or(1),
             updated_at: None,
             kind,
+            notification_thread_id: None,
+            author: None,
+            reason: None,
+            preview: None,
         }
     }
 

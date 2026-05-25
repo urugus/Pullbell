@@ -370,6 +370,10 @@ mod tests {
             number: 42,
             updated_at: Some(Utc.timestamp_opt(updated_at, 0).unwrap()),
             kind,
+            notification_thread_id: None,
+            author: None,
+            reason: None,
+            preview: None,
         }
     }
 
