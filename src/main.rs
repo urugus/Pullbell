@@ -43,6 +43,8 @@ enum AppCommand {
     CheckForUpdates,
     UpdateWithHomebrew,
     SignOut,
+    MarkNotificationDone(String),
+    MuteNotification(String),
     OpenUrl(String),
     Quit,
 }
@@ -150,6 +152,23 @@ fn main() -> Result<()> {
                 );
             }
             Event::UserEvent(AppEvent::PanelCommand(command)) => {
+                if command == "hide" {
+                    panel.hide();
+                    return;
+                }
+
+                if let Some(action) = command.strip_prefix("missing-thread:") {
+                    set_error(
+                        &state,
+                        format!(
+                            "{} is available for GitHub notification threads only.",
+                            notification_action_label(action)
+                        ),
+                    );
+                    let _ = proxy.send_event(AppEvent::StateChanged);
+                    return;
+                }
+
                 if let Some(command) = panel_command(&state, command) {
                     match command {
                         AppCommand::OpenUrl(url) => {
@@ -206,19 +225,41 @@ fn panel_command(state: &Arc<Mutex<AppState>>, command: String) -> Option<AppCom
             "https://github.com/notifications".to_string(),
         )),
         "quit" => Some(AppCommand::Quit),
-        _ => command
-            .strip_prefix("open:")
-            .filter(|url| {
-                url.starts_with("https://github.com/")
-                    || state
-                        .lock()
-                        .expect("state lock")
-                        .pending_auth
-                        .as_ref()
-                        .is_some_and(|auth| auth.verification_uri == *url)
-                    || pullbell::updater::RELEASES_URL == *url
-            })
-            .map(|url| AppCommand::OpenUrl(url.to_string())),
+        _ => {
+            if let Some(thread_id) = command.strip_prefix("done:").filter(|id| is_thread_id(id)) {
+                return Some(AppCommand::MarkNotificationDone(thread_id.to_string()));
+            }
+
+            if let Some(thread_id) = command.strip_prefix("mute:").filter(|id| is_thread_id(id)) {
+                return Some(AppCommand::MuteNotification(thread_id.to_string()));
+            }
+
+            command
+                .strip_prefix("open:")
+                .filter(|url| {
+                    url.starts_with("https://github.com/")
+                        || state
+                            .lock()
+                            .expect("state lock")
+                            .pending_auth
+                            .as_ref()
+                            .is_some_and(|auth| auth.verification_uri == *url)
+                        || pullbell::updater::RELEASES_URL == *url
+                })
+                .map(|url| AppCommand::OpenUrl(url.to_string()))
+        }
+    }
+}
+
+fn is_thread_id(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn notification_action_label(action: &str) -> &'static str {
+    match action {
+        "done" => "Done",
+        "mute" => "Mute",
+        _ => "This action",
     }
 }
 
@@ -275,11 +316,48 @@ async fn run_worker(
                         notification_tracker.reset();
                         let _ = proxy.send_event(AppEvent::StateChanged);
                     }
+                    AppCommand::MarkNotificationDone(thread_id) => {
+                        act_on_notification_thread(
+                            &state,
+                            &proxy,
+                            &mut notification_tracker,
+                            token_cache.as_deref(),
+                            &thread_id,
+                            NotificationThreadAction::Done,
+                        )
+                        .await;
+                    }
+                    AppCommand::MuteNotification(thread_id) => {
+                        act_on_notification_thread(
+                            &state,
+                            &proxy,
+                            &mut notification_tracker,
+                            token_cache.as_deref(),
+                            &thread_id,
+                            NotificationThreadAction::Mute,
+                        )
+                        .await;
+                    }
                     AppCommand::OpenUrl(_) => {}
                     AppCommand::CopySignInCode => {}
                     AppCommand::Quit => {}
                 }
             }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum NotificationThreadAction {
+    Done,
+    Mute,
+}
+
+impl NotificationThreadAction {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Done => "Done",
+            Self::Mute => "Mute",
         }
     }
 }
@@ -396,6 +474,7 @@ async fn refresh(
         let mut guard = state.lock().expect("state lock");
         guard.is_refreshing = true;
         guard.last_error = None;
+        guard.last_status = None;
     }
     let _ = proxy.send_event(AppEvent::StateChanged);
 
@@ -430,6 +509,52 @@ async fn refresh(
     }
 
     let _ = proxy.send_event(AppEvent::StateChanged);
+}
+
+async fn act_on_notification_thread(
+    state: &Arc<Mutex<AppState>>,
+    proxy: &EventLoopProxy<AppEvent>,
+    notification_tracker: &mut NotificationTracker,
+    token: Option<&str>,
+    thread_id: &str,
+    action: NotificationThreadAction,
+) {
+    let Some(token) = token else {
+        set_error(
+            state,
+            format!("{} requires GitHub sign-in.", action.label()),
+        );
+        let _ = proxy.send_event(AppEvent::StateChanged);
+        return;
+    };
+
+    {
+        let mut guard = state.lock().expect("state lock");
+        guard.last_error = None;
+        guard.last_status = Some(format!("{} notification...", action.label()));
+    }
+    let _ = proxy.send_event(AppEvent::StateChanged);
+
+    let client = GitHubClient::new(token);
+    let result = match action {
+        NotificationThreadAction::Done => client.mark_notification_thread_done(thread_id).await,
+        NotificationThreadAction::Mute => client.mute_notification_thread(thread_id).await,
+    };
+
+    match result {
+        Ok(()) => {
+            refresh(state, proxy, notification_tracker, Some(token)).await;
+            {
+                let mut guard = state.lock().expect("state lock");
+                guard.last_status = Some(format!("{} notification", action.label()));
+            }
+            let _ = proxy.send_event(AppEvent::StateChanged);
+        }
+        Err(error) => {
+            set_error(state, format!("{error:#}"));
+            let _ = proxy.send_event(AppEvent::StateChanged);
+        }
+    }
 }
 
 async fn check_for_updates(
@@ -482,7 +607,9 @@ fn start_homebrew_update(state: &Arc<Mutex<AppState>>, proxy: &EventLoopProxy<Ap
 }
 
 fn clear_error(state: &Arc<Mutex<AppState>>) {
-    state.lock().expect("state lock").last_error = None;
+    let mut guard = state.lock().expect("state lock");
+    guard.last_error = None;
+    guard.last_status = None;
 }
 
 fn set_error(state: &Arc<Mutex<AppState>>, error: String) {
@@ -490,6 +617,7 @@ fn set_error(state: &Arc<Mutex<AppState>>, error: String) {
     guard.is_refreshing = false;
     guard.pending_auth = None;
     guard.last_error = Some(error);
+    guard.last_status = None;
 }
 
 fn load_client_id() -> Option<String> {

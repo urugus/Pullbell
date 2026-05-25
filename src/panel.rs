@@ -4,6 +4,7 @@ use chrono::{DateTime, Duration, Utc};
 use pullbell::model::{PrKind, PullRequestItem};
 use pullbell::state::AppState;
 use pullbell::updater;
+use std::collections::BTreeSet;
 use tao::dpi::{LogicalSize, PhysicalPosition};
 use tao::event_loop::{EventLoop, EventLoopProxy};
 #[cfg(target_os = "macos")]
@@ -135,6 +136,7 @@ button {{
   letter-spacing: 0;
 }}
 .panel {{
+  position: relative;
   width: 500px;
   height: 660px;
   overflow: hidden;
@@ -201,6 +203,27 @@ button {{
   overflow: auto;
   padding: 8px 8px 12px;
 }}
+.filters {{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px 6px 4px;
+}}
+.filter {{
+  min-width: 0;
+  height: 28px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 8px;
+  padding: 0 8px;
+  color: #d9dce2;
+  background: #252930;
+  font: inherit;
+  font-size: 11px;
+}}
+.filter:focus {{
+  outline: 1px solid rgba(255,255,255,.20);
+  outline-offset: 0;
+}}
 .section {{
   padding: 8px 6px 2px;
 }}
@@ -235,11 +258,15 @@ button {{
 .row:hover {{
   background: #2c3036;
 }}
+.row:focus {{
+  outline: none;
+}}
 .row:active {{
   background: #343940;
 }}
 .row.selected {{
   background: #313640;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.10);
 }}
 .badge {{
   width: 28px;
@@ -359,13 +386,232 @@ button {{
   font-weight: 700;
 }}
 .spacer {{ flex: 1; }}
+.preview {{
+  position: absolute;
+  inset: 58px 10px 52px;
+  display: none;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 14px;
+  background: #22262d;
+  box-shadow: 0 18px 54px rgba(0,0,0,.46);
+  z-index: 3;
+}}
+.preview.open {{
+  display: grid;
+}}
+.preview-head {{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}}
+.preview-title {{
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #f3f4f6;
+  font-weight: 650;
+}}
+.preview-meta {{
+  margin-top: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #969ca7;
+  font-size: 11px;
+}}
+.preview-close {{
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  color: #d6d9df;
+  background: transparent;
+}}
+.preview-close:hover {{
+  background: #323741;
+}}
+.preview-body {{
+  overflow: auto;
+  padding: 13px 14px 16px;
+  color: #d7dae0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.45;
+}}
 </style>
 </head>
 <body>
 <div class="panel"><div id="app" class="shell">{}</div></div>
 <script>
 window.send = function(message) {{ window.ipc.postMessage(message); }};
-window.PullbellRender = function(html) {{ document.getElementById("app").innerHTML = html; }};
+(function() {{
+  const app = document.getElementById("app");
+  let selectedIndex = 0;
+  let filters = {{ repo: "", reason: "", author: "" }};
+  let previewOpen = false;
+
+  function selectableRows() {{
+    return Array.from(document.querySelectorAll("[data-selectable='true']"));
+  }}
+
+  function clamp(index, count) {{
+    if (count === 0) return 0;
+    return Math.max(0, Math.min(index, count - 1));
+  }}
+
+  window.PullbellSelect = function(index, shouldFocus) {{
+    const rows = selectableRows().filter(function(row) {{ return !row.hidden; }});
+    selectedIndex = clamp(index, rows.length);
+
+    selectableRows().forEach(function(row) {{
+      const selected = rows[selectedIndex] === row;
+      row.classList.toggle("selected", selected);
+      row.tabIndex = selected ? 0 : -1;
+      row.setAttribute("aria-selected", selected ? "true" : "false");
+    }});
+
+    if (rows.length > 0 && shouldFocus) {{
+      rows[selectedIndex].focus({{ preventScroll: true }});
+      rows[selectedIndex].scrollIntoView({{ block: "nearest" }});
+    }}
+
+    if (previewOpen) window.PullbellShowPreview();
+  }};
+
+  window.PullbellSelectElement = function(element) {{
+    const index = selectableRows().filter(function(row) {{ return !row.hidden; }}).indexOf(element);
+    if (index >= 0) window.PullbellSelect(index, false);
+  }};
+
+  window.PullbellActivateSelected = function() {{
+    const row = selectableRows().filter(function(row) {{ return !row.hidden; }})[selectedIndex];
+    if (row && row.dataset.cmd) window.send(row.dataset.cmd);
+  }};
+
+  window.PullbellActOnSelected = function(action) {{
+    const row = selectableRows().filter(function(row) {{ return !row.hidden; }})[selectedIndex];
+    if (!row) return;
+
+    const command = action === "done" ? row.dataset.doneCmd : row.dataset.muteCmd;
+    window.send(command || "missing-thread:" + action);
+  }};
+
+  window.PullbellShowPreview = function() {{
+    const row = selectableRows().filter(function(row) {{ return !row.hidden; }})[selectedIndex];
+    const preview = document.getElementById("preview");
+    if (!row || !preview) return;
+
+    document.getElementById("preview-title").textContent = row.dataset.previewTitle || "";
+    document.getElementById("preview-meta").textContent = row.dataset.previewMeta || "";
+    document.getElementById("preview-body").textContent = row.dataset.previewBody || "No preview text available.";
+    preview.classList.add("open");
+    previewOpen = true;
+  }};
+
+  window.PullbellHidePreview = function() {{
+    const preview = document.getElementById("preview");
+    if (preview) preview.classList.remove("open");
+    previewOpen = false;
+  }};
+
+  window.PullbellTogglePreview = function() {{
+    if (previewOpen) {{
+      window.PullbellHidePreview();
+    }} else {{
+      window.PullbellShowPreview();
+    }}
+  }};
+
+  function syncFilterControls() {{
+    Object.keys(filters).forEach(function(name) {{
+      const control = document.querySelector("[data-filter='" + name + "']");
+      if (!control) return;
+      const hasValue = Array.from(control.options).some(function(option) {{
+        return option.value === filters[name];
+      }});
+      control.value = hasValue ? filters[name] : "";
+      if (!hasValue) filters[name] = "";
+    }});
+  }}
+
+  window.PullbellApplyFilters = function() {{
+    selectableRows().forEach(function(row) {{
+      const visible =
+        (!filters.repo || row.dataset.repo === filters.repo) &&
+        (!filters.reason || row.dataset.reason === filters.reason) &&
+        (!filters.author || row.dataset.author === filters.author);
+      row.hidden = !visible;
+    }});
+    window.PullbellSelect(selectedIndex, false);
+  }};
+
+  window.PullbellRender = function(html) {{
+    app.innerHTML = html;
+    syncFilterControls();
+    window.PullbellApplyFilters();
+    if (previewOpen) window.PullbellShowPreview();
+  }};
+
+  document.addEventListener("change", function(event) {{
+    const name = event.target.dataset && event.target.dataset.filter;
+    if (!name) return;
+    filters[name] = event.target.value;
+    selectedIndex = 0;
+    window.PullbellApplyFilters();
+  }});
+
+  document.addEventListener("keydown", function(event) {{
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.target && /^(BUTTON|SELECT|INPUT|TEXTAREA)$/.test(event.target.tagName)) return;
+
+    const key = event.key.toLowerCase();
+    if (key === "j" || event.key === "ArrowDown") {{
+      event.preventDefault();
+      window.PullbellSelect(selectedIndex + 1, true);
+    }} else if (key === "k" || event.key === "ArrowUp") {{
+      event.preventDefault();
+      window.PullbellSelect(selectedIndex - 1, true);
+    }} else if (key === "enter" || key === "o") {{
+      event.preventDefault();
+      window.PullbellActivateSelected();
+    }} else if (event.key === " ") {{
+      event.preventDefault();
+      window.PullbellTogglePreview();
+    }} else if (key === "d") {{
+      event.preventDefault();
+      window.PullbellActOnSelected("done");
+    }} else if (key === "m") {{
+      event.preventDefault();
+      window.PullbellActOnSelected("mute");
+    }} else if (key === "r") {{
+      event.preventDefault();
+      window.send("refresh");
+    }} else if (key === "i") {{
+      event.preventDefault();
+      window.send("inbox");
+    }} else if (key === "escape") {{
+      event.preventDefault();
+      if (previewOpen) {{
+        window.PullbellHidePreview();
+        return;
+      }}
+      window.send("hide");
+    }} else if (key === "q") {{
+      event.preventDefault();
+      window.send("quit");
+    }}
+  }});
+
+  syncFilterControls();
+  window.PullbellApplyFilters();
+}})();
 </script>
 </body>
 </html>"#,
@@ -379,6 +625,7 @@ fn render_body(snapshot: &AppState) -> String {
 
     html.push_str(&render_topbar(snapshot, todo_count));
     html.push_str(r#"<main class="content">"#);
+    html.push_str(&render_filters(snapshot));
     html.push_str(&render_pinned(snapshot));
     html.push_str(&render_section(
         "To do",
@@ -400,6 +647,7 @@ fn render_body(snapshot: &AppState) -> String {
     ));
     html.push_str("</main>");
     html.push_str(&render_footer(snapshot));
+    html.push_str(&render_preview());
     html
 }
 
@@ -420,6 +668,52 @@ fn render_topbar(snapshot: &AppState, todo_count: usize) -> String {
     )
 }
 
+fn render_filters(snapshot: &AppState) -> String {
+    let repos = sorted_values(snapshot.pull_requests.iter().map(|item| item.repo.clone()));
+    let reasons = sorted_values(snapshot.pull_requests.iter().map(reason_label));
+    let authors = sorted_values(
+        snapshot
+            .pull_requests
+            .iter()
+            .filter_map(|item| item.author.clone()),
+    );
+
+    format!(
+        r#"<div class="filters">{}{}{}</div>"#,
+        render_filter("repo", "Repository", &repos),
+        render_filter("reason", "Reason", &reasons),
+        render_filter("author", "User", &authors)
+    )
+}
+
+fn render_filter(name: &str, label: &str, values: &[String]) -> String {
+    let mut html = format!(
+        r#"<select class="filter" data-filter="{}" aria-label="{}"><option value="">{}</option>"#,
+        escape_attr(name),
+        escape_attr(label),
+        escape_html(label)
+    );
+
+    for value in values {
+        html.push_str(&format!(
+            r#"<option value="{}">{}</option>"#,
+            escape_attr(value),
+            escape_html(short_filter_value(value))
+        ));
+    }
+
+    html.push_str("</select>");
+    html
+}
+
+fn sorted_values(values: impl Iterator<Item = String>) -> Vec<String> {
+    values
+        .filter(|value| !value.trim().is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 fn render_pinned(snapshot: &AppState) -> String {
     let mut html = String::from(
         r#"<section class="section"><div class="heading"><span>Pinned</span><span></span></div>"#,
@@ -438,6 +732,11 @@ fn render_pinned(snapshot: &AppState) -> String {
     } else if let Some(status) = &snapshot.update_status {
         html.push_str(&format!(
             r#"<div class="pinned"><div class="pinned-title">Update status</div><div class="pinned-body">{}</div></div>"#,
+            escape_html(status)
+        ));
+    } else if let Some(status) = &snapshot.last_status {
+        html.push_str(&format!(
+            r#"<div class="pinned"><div class="pinned-title">Status</div><div class="pinned-body">{}</div></div>"#,
             escape_html(status)
         ));
     } else if snapshot.is_checking_updates {
@@ -516,10 +815,28 @@ fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
         .map(|updated_at| relative_age(updated_at, now))
         .unwrap_or_else(|| "unknown".to_string());
     let command = format!("open:{}", item.url);
+    let done_attr = notification_action_attr("data-done-cmd", "done", item);
+    let mute_attr = notification_action_attr("data-mute-cmd", "mute", item);
+    let reason = reason_label(item);
+    let author = item.author.as_deref().unwrap_or("");
+    let preview_meta = preview_meta(item, &age, &reason);
+    let preview_body = item
+        .preview
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("No preview text available.");
 
     format!(
-        r#"<button class="row" data-cmd="{}" onclick="send(this.dataset.cmd)"><div class="badge {}">{}</div><div class="main"><div class="meta"><span class="repo">{}</span><span class="dot"></span><span>#{}</span><span class="dot"></span><span>{}</span></div><div class="title">{}</div></div><div class="age">{}</div></button>"#,
+        r#"<button class="row" data-selectable="true" data-cmd="{}" data-repo="{}" data-reason="{}" data-author="{}" data-preview-title="{}" data-preview-meta="{}" data-preview-body="{}"{}{} tabindex="-1" aria-selected="false" onfocus="window.PullbellSelectElement(this)" onclick="send(this.dataset.cmd)"><div class="badge {}">{}</div><div class="main"><div class="meta"><span class="repo">{}</span><span class="dot"></span><span>#{}</span><span class="dot"></span><span>{}</span></div><div class="title">{}</div></div><div class="age">{}</div></button>"#,
         escape_attr(&command),
+        escape_attr(&item.repo),
+        escape_attr(&reason),
+        escape_attr(author),
+        escape_attr(&item.title),
+        escape_attr(&preview_meta),
+        escape_attr(preview_body),
+        done_attr,
+        mute_attr,
         badge_class,
         badge_text,
         escape_html(repo),
@@ -528,6 +845,59 @@ fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
         escape_html(&item.title),
         escape_html(&age)
     )
+}
+
+fn preview_meta(item: &PullRequestItem, age: &str, reason: &str) -> String {
+    let author = item
+        .author
+        .as_ref()
+        .map(|author| format!(" by {author}"))
+        .unwrap_or_default();
+
+    format!(
+        "{} #{} · {} · {}{}",
+        item.repo, item.number, age, reason, author
+    )
+}
+
+fn reason_label(item: &PullRequestItem) -> String {
+    item.reason
+        .as_deref()
+        .map(humanize_reason)
+        .unwrap_or_else(|| {
+            match item.kind {
+                PrKind::ReviewRequested => "Review requested",
+                PrKind::Notification => "Notification",
+                PrKind::Authored => "Author",
+            }
+            .to_string()
+        })
+}
+
+fn humanize_reason(value: &str) -> String {
+    value
+        .split(['_', '-'])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn short_filter_value(value: &str) -> &str {
+    value.rsplit('/').next().unwrap_or(value)
+}
+
+fn notification_action_attr(name: &str, action: &str, item: &PullRequestItem) -> String {
+    item.notification_thread_id
+        .as_ref()
+        .map(|thread_id| format!(" {name}=\"{action}:{}\"", escape_attr(thread_id)))
+        .unwrap_or_default()
 }
 
 fn render_footer(snapshot: &AppState) -> String {
@@ -576,6 +946,10 @@ fn render_footer(snapshot: &AppState) -> String {
     }
     html.push_str(r#"<button class="tool" onclick="send('quit')">Quit</button></footer>"#);
     html
+}
+
+fn render_preview() -> String {
+    r#"<aside id="preview" class="preview"><div class="preview-head"><div><div id="preview-title" class="preview-title"></div><div id="preview-meta" class="preview-meta"></div></div><button class="preview-close" onclick="window.PullbellHidePreview()" title="Close preview" aria-label="Close preview">x</button></div><div id="preview-body" class="preview-body"></div></aside>"#.to_string()
 }
 
 fn short_repo_name(repo: &str) -> &str {
@@ -628,6 +1002,17 @@ mod tests {
             number: 42,
             updated_at: Some(Utc.timestamp_opt(7_200, 0).unwrap()),
             kind,
+            notification_thread_id: None,
+            author: Some("octo".to_string()),
+            reason: Some("review_requested".to_string()),
+            preview: Some("Review the updated notification layout before merging.".to_string()),
+        }
+    }
+
+    fn notification_item() -> PullRequestItem {
+        PullRequestItem {
+            notification_thread_id: Some("thread-42".to_string()),
+            ..item(PrKind::Notification)
         }
     }
 
@@ -653,6 +1038,64 @@ mod tests {
         assert!(body.contains("Unread notification"));
         assert!(body.contains("Authored"));
         assert!(body.contains("data-cmd=\"open:https://github.com/owner/repo/pull/42\""));
+    }
+
+    #[test]
+    fn renders_keyboard_first_panel_behavior() {
+        let snapshot = AppState {
+            token_loaded: true,
+            pull_requests: vec![item(PrKind::ReviewRequested)],
+            ..Default::default()
+        };
+
+        let markup = html(&snapshot);
+
+        assert!(markup.contains("data-selectable=\"true\""));
+        assert!(markup.contains("window.PullbellSelect"));
+        assert!(markup.contains("window.PullbellActivateSelected"));
+        assert!(markup.contains("window.PullbellActOnSelected"));
+        assert!(markup.contains("window.PullbellTogglePreview"));
+        assert!(markup.contains("ArrowDown"));
+        assert!(markup.contains("BUTTON|SELECT|INPUT|TEXTAREA"));
+        assert!(
+            markup.contains("event.key === &quot; &quot;")
+                || markup.contains(r#"event.key === " ""#)
+        );
+        assert!(markup.contains("window.PullbellActOnSelected(\"done\")"));
+        assert!(markup.contains("window.PullbellActOnSelected(\"mute\")"));
+        assert!(markup.contains("window.send(\"refresh\")"));
+        assert!(markup.contains("window.send(\"inbox\")"));
+        assert!(markup.contains("window.send(\"hide\")"));
+    }
+
+    #[test]
+    fn renders_preview_and_filter_metadata() {
+        let snapshot = AppState {
+            token_loaded: true,
+            pull_requests: vec![item(PrKind::ReviewRequested)],
+            ..Default::default()
+        };
+
+        let body = render_body(&snapshot);
+
+        assert!(body.contains("data-filter=\"repo\""));
+        assert!(body.contains("data-filter=\"reason\""));
+        assert!(body.contains("data-filter=\"author\""));
+        assert!(body.contains("data-preview-title=\"Tighten notification layout\""));
+        assert!(body.contains(
+            "data-preview-body=\"Review the updated notification layout before merging.\""
+        ));
+        assert!(body.contains("id=\"preview\""));
+        assert!(body.contains("aria-label=\"Close preview\""));
+    }
+
+    #[test]
+    fn renders_notification_thread_actions_when_available() {
+        let row = render_item(&notification_item(), Utc.timestamp_opt(7_200, 0).unwrap());
+
+        assert!(row.contains("data-done-cmd=\"done:thread-42\""));
+        assert!(row.contains("data-mute-cmd=\"mute:thread-42\""));
+        assert!(!row.contains("thread-42\"\""));
     }
 
     #[test]

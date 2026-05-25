@@ -39,6 +39,10 @@ pub struct PullRequestItem {
     pub number: u64,
     pub updated_at: Option<DateTime<Utc>>,
     pub kind: PrKind,
+    pub notification_thread_id: Option<String>,
+    pub author: Option<String>,
+    pub reason: Option<String>,
+    pub preview: Option<String>,
 }
 
 impl PullRequestItem {
@@ -69,6 +73,18 @@ pub fn merge_pr_items(items: Vec<PullRequestItem>) -> Vec<PullRequestItem> {
                 }
                 if item.updated_at > existing.updated_at {
                     existing.updated_at = item.updated_at;
+                }
+                if existing.notification_thread_id.is_none() {
+                    existing.notification_thread_id = item.notification_thread_id.clone();
+                }
+                if existing.author.is_none() {
+                    existing.author = item.author.clone();
+                }
+                if existing.reason.is_none() {
+                    existing.reason = item.reason.clone();
+                }
+                if existing.preview.is_none() {
+                    existing.preview = item.preview.clone();
                 }
             })
             .or_insert(item);
@@ -101,6 +117,17 @@ mod tests {
             number: id.parse().unwrap_or(1),
             updated_at: Some(Utc.timestamp_opt(updated_at, 0).unwrap()),
             kind,
+            notification_thread_id: None,
+            author: None,
+            reason: None,
+            preview: None,
+        }
+    }
+
+    fn notification_item(id: &str, thread_id: &str, updated_at: i64) -> PullRequestItem {
+        PullRequestItem {
+            notification_thread_id: Some(thread_id.to_string()),
+            ..item(id, PrKind::Notification, updated_at)
         }
     }
 
@@ -134,16 +161,53 @@ mod tests {
     fn merge_prefers_unread_notifications_over_authored_prs() {
         let merged = merge_pr_items(vec![
             item("2", PrKind::Authored, 30),
-            item("2", PrKind::Notification, 40),
+            notification_item("2", "thread-2", 40),
         ]);
 
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].id, "2");
         assert_eq!(merged[0].kind, PrKind::Notification);
         assert_eq!(
+            merged[0].notification_thread_id.as_deref(),
+            Some("thread-2")
+        );
+        assert_eq!(
             merged[0].updated_at,
             Some(Utc.timestamp_opt(40, 0).unwrap())
         );
+    }
+
+    #[test]
+    fn merge_preserves_notification_thread_id_when_review_request_is_more_actionable() {
+        let merged = merge_pr_items(vec![
+            notification_item("1", "thread-1", 10),
+            item("1", PrKind::ReviewRequested, 20),
+        ]);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].kind, PrKind::ReviewRequested);
+        assert_eq!(
+            merged[0].notification_thread_id.as_deref(),
+            Some("thread-1")
+        );
+    }
+
+    #[test]
+    fn merge_preserves_preview_metadata_from_duplicates() {
+        let merged = merge_pr_items(vec![
+            PullRequestItem {
+                author: Some("octo".to_string()),
+                reason: Some("comment".to_string()),
+                preview: Some("Looks good".to_string()),
+                ..notification_item("1", "thread-1", 10)
+            },
+            item("1", PrKind::ReviewRequested, 20),
+        ]);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].author.as_deref(), Some("octo"));
+        assert_eq!(merged[0].reason.as_deref(), Some("comment"));
+        assert_eq!(merged[0].preview.as_deref(), Some("Looks good"));
     }
 
     #[test]

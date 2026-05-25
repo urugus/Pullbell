@@ -9,6 +9,7 @@ pub struct AppState {
     pub is_checking_updates: bool,
     pub homebrew_cask_installed: bool,
     pub last_error: Option<String>,
+    pub last_status: Option<String>,
     pub update_status: Option<String>,
     pub last_refreshed_at: Option<DateTime<Utc>>,
     pub last_update_checked_at: Option<DateTime<Utc>>,
@@ -68,6 +69,10 @@ mod tests {
             number: id.parse().unwrap_or(1),
             updated_at: None,
             kind,
+            notification_thread_id: None,
+            author: None,
+            reason: None,
+            preview: None,
         }
     }
 

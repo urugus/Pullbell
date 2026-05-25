@@ -111,6 +111,11 @@ fn append_pinned_section(
         return Ok(());
     }
 
+    if let Some(status) = &snapshot.last_status {
+        append_disabled(menu, &truncate_menu_label(status, MAX_MENU_LABEL_CHARS))?;
+        return Ok(());
+    }
+
     if snapshot.is_checking_updates {
         append_disabled(menu, "Checking for updates...")?;
     } else if let Some(error) = &snapshot.last_error {
@@ -370,6 +375,10 @@ mod tests {
             number: 42,
             updated_at: Some(Utc.timestamp_opt(updated_at, 0).unwrap()),
             kind,
+            notification_thread_id: None,
+            author: None,
+            reason: None,
+            preview: None,
         }
     }
 
