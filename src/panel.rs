@@ -203,6 +203,12 @@ button {{
   overflow: auto;
   padding: 8px 8px 12px;
 }}
+.view {{
+  display: none;
+}}
+.view.active {{
+  display: block;
+}}
 .filters {{
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -379,6 +385,16 @@ button {{
   background: #30343b;
   color: #ffffff;
 }}
+.tool.icon {{
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+}}
+.tool svg {{
+  width: 17px;
+  height: 17px;
+  stroke: currentColor;
+}}
 .tool.primary {{
   min-width: 72px;
   background: #f4f5f7;
@@ -386,6 +402,111 @@ button {{
   font-weight: 700;
 }}
 .spacer {{ flex: 1; }}
+.settings {{
+  padding: 0;
+  background: #202329;
+}}
+.settings-head {{
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 14px 14px 12px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}}
+.settings-title {{
+  min-width: 0;
+  color: #f3f4f6;
+  font-size: 18px;
+  font-weight: 700;
+}}
+.settings-subtitle {{
+  margin-top: 2px;
+  color: #9298a3;
+  font-size: 11px;
+}}
+.settings-body {{
+  padding: 10px 14px 16px;
+}}
+.settings-section {{
+  padding: 12px 0 14px;
+  border-bottom: 1px solid rgba(255,255,255,.07);
+}}
+.settings-section:last-child {{
+  border-bottom: 0;
+}}
+.settings-label {{
+  color: #7f8490;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}}
+.setting-row {{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  min-height: 46px;
+  padding: 8px 0;
+}}
+.setting-name {{
+  color: #f0f1f3;
+  font-size: 13px;
+  font-weight: 620;
+}}
+.setting-note {{
+  margin-top: 3px;
+  color: #969ca7;
+  font-size: 11px;
+}}
+.switch {{
+  position: relative;
+  width: 42px;
+  height: 24px;
+  border: 0;
+  border-radius: 999px;
+  background: #3a404a;
+}}
+.switch::after {{
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #cfd3da;
+  box-shadow: 0 1px 3px rgba(0,0,0,.35);
+}}
+.settings-filters {{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  padding-top: 10px;
+}}
+.settings-filters .filter {{
+  width: 100%;
+}}
+.chips {{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding-top: 10px;
+}}
+.chip {{
+  max-width: 100%;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #c9ced7;
+  background: #2b3038;
+  font-size: 11px;
+}}
+.chip.empty {{
+  color: #8b929e;
+}}
 .preview {{
   position: absolute;
   inset: 58px 10px 52px;
@@ -456,6 +577,7 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
   let selectedIndex = 0;
   let filters = {{ repo: "", reason: "", author: "" }};
   let previewOpen = false;
+  let currentView = "notifications";
 
   function selectableRows() {{
     return Array.from(document.querySelectorAll("[data-selectable='true']"));
@@ -529,15 +651,39 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
     }}
   }};
 
+  window.PullbellSetView = function(view) {{
+    currentView = view === "settings" ? "settings" : "notifications";
+    document.querySelectorAll("[data-panel-view]").forEach(function(element) {{
+      element.classList.toggle("active", element.dataset.panelView === currentView);
+    }});
+    const settingsButton = document.querySelector("[data-open-settings]");
+    if (settingsButton) {{
+      settingsButton.setAttribute("aria-expanded", currentView === "settings" ? "true" : "false");
+    }}
+    if (currentView === "settings") window.PullbellHidePreview();
+  }};
+
+  window.PullbellShowSettings = function() {{
+    window.PullbellSetView("settings");
+  }};
+
+  window.PullbellShowNotifications = function() {{
+    window.PullbellSetView("notifications");
+  }};
+
   function syncFilterControls() {{
     Object.keys(filters).forEach(function(name) {{
-      const control = document.querySelector("[data-filter='" + name + "']");
-      if (!control) return;
-      const hasValue = Array.from(control.options).some(function(option) {{
-        return option.value === filters[name];
+      const controls = Array.from(document.querySelectorAll("[data-filter='" + name + "']"));
+      if (controls.length === 0) return;
+      const hasValue = controls.some(function(control) {{
+        return Array.from(control.options).some(function(option) {{
+          return option.value === filters[name];
+        }});
       }});
-      control.value = hasValue ? filters[name] : "";
       if (!hasValue) filters[name] = "";
+      controls.forEach(function(control) {{
+        control.value = filters[name];
+      }});
     }});
   }}
 
@@ -556,6 +702,7 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
     app.innerHTML = html;
     syncFilterControls();
     window.PullbellApplyFilters();
+    window.PullbellSetView(currentView);
     if (previewOpen) window.PullbellShowPreview();
   }};
 
@@ -564,15 +711,30 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
     if (!name) return;
     filters[name] = event.target.value;
     selectedIndex = 0;
+    syncFilterControls();
     window.PullbellApplyFilters();
   }});
 
   document.addEventListener("keydown", function(event) {{
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+    const key = event.key.toLowerCase();
+    if (key === "escape") {{
+      event.preventDefault();
+      if (currentView === "settings") {{
+        window.PullbellShowNotifications();
+        return;
+      }}
+      if (previewOpen) {{
+        window.PullbellHidePreview();
+        return;
+      }}
+      window.send("hide");
+      return;
+    }}
     if (event.target && /^(SELECT|INPUT|TEXTAREA)$/.test(event.target.tagName)) return;
     if (event.target && event.target.tagName === "BUTTON" && event.target.dataset.selectable !== "true") return;
+    if (currentView !== "notifications") return;
 
-    const key = event.key.toLowerCase();
     if (key === "j" || event.key === "ArrowDown") {{
       event.preventDefault();
       window.PullbellSelect(selectedIndex + 1, true);
@@ -597,13 +759,6 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
     }} else if (key === "i") {{
       event.preventDefault();
       window.send("inbox");
-    }} else if (key === "escape") {{
-      event.preventDefault();
-      if (previewOpen) {{
-        window.PullbellHidePreview();
-        return;
-      }}
-      window.send("hide");
     }} else if (key === "q") {{
       event.preventDefault();
       window.send("quit");
@@ -625,7 +780,9 @@ fn render_body(snapshot: &AppState) -> String {
     let (todo_count, done_count) = snapshot.todo_done_counts();
 
     html.push_str(&render_topbar(snapshot, todo_count));
-    html.push_str(r#"<main class="content">"#);
+    html.push_str(
+        r#"<main id="notifications-view" class="content view active" data-panel-view="notifications">"#,
+    );
     html.push_str(&render_filters(snapshot));
     html.push_str(&render_pinned(snapshot));
     html.push_str(&render_section(
@@ -647,6 +804,7 @@ fn render_body(snapshot: &AppState) -> String {
         "No open PRs being tracked",
     ));
     html.push_str("</main>");
+    html.push_str(&render_settings(snapshot));
     html.push_str(&render_footer(snapshot));
     html.push_str(&render_preview());
     html
@@ -670,6 +828,13 @@ fn render_topbar(snapshot: &AppState, todo_count: usize) -> String {
 }
 
 fn render_filters(snapshot: &AppState) -> String {
+    format!(
+        r#"<div class="filters">{}</div>"#,
+        render_filter_controls(snapshot)
+    )
+}
+
+fn render_filter_controls(snapshot: &AppState) -> String {
     let repos = sorted_values(snapshot.pull_requests.iter().map(|item| item.repo.clone()));
     let reasons = sorted_values(snapshot.pull_requests.iter().map(reason_label));
     let authors = sorted_values(
@@ -680,11 +845,59 @@ fn render_filters(snapshot: &AppState) -> String {
     );
 
     format!(
-        r#"<div class="filters">{}{}{}</div>"#,
+        r#"{}{}{}"#,
         render_filter("repo", "Repository", &repos),
         render_filter("reason", "Reason", &reasons),
         render_filter("author", "User", &authors)
     )
+}
+
+fn render_settings(snapshot: &AppState) -> String {
+    format!(
+        r#"<main id="settings-view" class="content view settings" data-panel-view="settings"><div class="settings-head"><button class="tool icon" title="Back to notifications" aria-label="Back to notifications" onclick="window.PullbellShowNotifications()">{}</button><div><div class="settings-title">Controls</div><div class="settings-subtitle">Tune which pull request notifications stay in focus.</div></div></div><div class="settings-body"><section class="settings-section"><div class="settings-label">View</div><div class="setting-row"><div><div class="setting-name">Group by Repository</div><div class="setting-note">Preview control only. The notification list keeps the current order.</div></div><button class="switch" type="button" aria-label="Group by Repository" aria-pressed="false"></button></div></section><section class="settings-section"><div class="settings-label">Focus filters</div><div class="setting-note">These controls mirror the notification list filters.</div><div class="settings-filters">{}</div></section><section class="settings-section"><div class="settings-label">Muted</div><div class="setting-note">Available repositories, reasons, and users you can filter out for this session.</div>{}</section></div></main>"#,
+        back_icon(),
+        render_filter_controls(snapshot),
+        render_muted_chips(snapshot)
+    )
+}
+
+fn render_muted_chips(snapshot: &AppState) -> String {
+    let values = sorted_values(
+        snapshot
+            .pull_requests
+            .iter()
+            .flat_map(|item| {
+                [
+                    Some(short_repo_name(&item.repo).to_string()),
+                    Some(reason_label(item)),
+                    item.author.clone(),
+                ]
+            })
+            .flatten(),
+    );
+
+    if values.is_empty() {
+        return r#"<div class="chips"><span class="chip empty">No mute targets available</span></div>"#
+            .to_string();
+    }
+
+    let mut html = String::from(r#"<div class="chips">"#);
+    for value in values.iter().take(8) {
+        html.push_str(&format!(
+            r#"<span class="chip">{}</span>"#,
+            escape_html(short_filter_value(value))
+        ));
+    }
+
+    if values.len() > 8 {
+        html.push_str(&format!(
+            r#"<span class="chip">+{} more</span>"#,
+            values.len() - 8
+        ));
+    }
+
+    html.push_str("</div>");
+    html
 }
 
 fn render_filter(name: &str, label: &str, values: &[String]) -> String {
@@ -945,12 +1158,24 @@ fn render_footer(snapshot: &AppState) -> String {
     if snapshot.token_loaded {
         html.push_str(r#"<button class="tool" onclick="send('signout')">Sign out</button>"#);
     }
+    html.push_str(&format!(
+        r#"<button class="tool icon" data-open-settings type="button" title="Settings" aria-label="Open settings" aria-expanded="false" onclick="window.PullbellShowSettings()">{}</button>"#,
+        settings_icon()
+    ));
     html.push_str(r#"<button class="tool" onclick="send('quit')">Quit</button></footer>"#);
     html
 }
 
 fn render_preview() -> String {
     r#"<aside id="preview" class="preview"><div class="preview-head"><div><div id="preview-title" class="preview-title"></div><div id="preview-meta" class="preview-meta"></div></div><button class="preview-close" onclick="window.PullbellHidePreview()" title="Close preview" aria-label="Close preview">x</button></div><div id="preview-body" class="preview-body"></div></aside>"#.to_string()
+}
+
+fn settings_icon() -> &'static str {
+    r#"<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"></path><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1A2 2 0 1 1 4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.3 7A2 2 0 1 1 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6h.1a1.7 1.7 0 0 0 1.9-.3l.1-.1A2 2 0 1 1 19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.6 1h.1a2 2 0 1 1 0 4H21a1.7 1.7 0 0 0-1.6.9Z"></path></svg>"#
+}
+
+fn back_icon() -> &'static str {
+    r#"<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>"#
 }
 
 fn short_repo_name(repo: &str) -> &str {
@@ -1056,7 +1281,17 @@ mod tests {
         assert!(markup.contains("window.PullbellActivateSelected"));
         assert!(markup.contains("window.PullbellActOnSelected"));
         assert!(markup.contains("window.PullbellTogglePreview"));
+        assert!(markup.contains("window.PullbellShowSettings"));
+        assert!(markup.contains("window.PullbellShowNotifications"));
         assert!(markup.contains("ArrowDown"));
+        assert!(
+            markup.contains("currentView !== &quot;notifications&quot;")
+                || markup.contains(r#"currentView !== "notifications""#)
+        );
+        assert!(
+            markup.contains("currentView === &quot;settings&quot;")
+                || markup.contains(r#"currentView === "settings""#)
+        );
         assert!(
             markup.contains("event.target.dataset.selectable !== &quot;true&quot;")
                 || markup.contains("event.target.dataset.selectable !== \"true\"")
@@ -1071,6 +1306,29 @@ mod tests {
         assert!(markup.contains("window.send(\"refresh\")"));
         assert!(markup.contains("window.send(\"inbox\")"));
         assert!(markup.contains("window.send(\"hide\")"));
+    }
+
+    #[test]
+    fn renders_settings_entrypoint_and_controls_view() {
+        let snapshot = AppState {
+            token_loaded: true,
+            pull_requests: vec![item(PrKind::ReviewRequested)],
+            ..Default::default()
+        };
+
+        let body = render_body(&snapshot);
+
+        assert!(body.contains("aria-label=\"Open settings\""));
+        assert!(body.contains("data-open-settings"));
+        assert!(body.contains("id=\"settings-view\""));
+        assert!(body.contains("data-panel-view=\"settings\""));
+        assert!(body.contains("aria-label=\"Back to notifications\""));
+        assert!(body.contains(">Controls<"));
+        assert!(body.contains(">Group by Repository<"));
+        assert!(body.contains(">Muted<"));
+        assert!(body.matches("data-filter=\"repo\"").count() >= 2);
+        assert!(body.matches("data-filter=\"reason\"").count() >= 2);
+        assert!(body.matches("data-filter=\"author\"").count() >= 2);
     }
 
     #[test]
