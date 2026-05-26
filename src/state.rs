@@ -7,7 +7,6 @@ pub struct AppState {
     pub token_loaded: bool,
     pub is_refreshing: bool,
     pub is_checking_updates: bool,
-    pub homebrew_cask_installed: bool,
     pub last_error: Option<String>,
     pub last_status: Option<String>,
     pub update_status: Option<String>,

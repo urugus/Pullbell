@@ -86,13 +86,8 @@ fn append_pinned_section(
             menu,
             &format!("Update available: v{}", update.latest_version),
         )?;
-        if snapshot.homebrew_cask_installed {
-            append_command(
-                menu,
-                commands,
-                "Update with Homebrew",
-                AppCommand::UpdateWithHomebrew,
-            )?;
+        if update.download_url.is_some() {
+            append_command(menu, commands, "Install update", AppCommand::InstallUpdate)?;
         }
         append_command(
             menu,

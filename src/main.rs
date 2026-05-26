@@ -41,7 +41,7 @@ enum AppCommand {
     CopySignInCode,
     Refresh,
     CheckForUpdates,
-    UpdateWithHomebrew,
+    InstallUpdate,
     SignOut,
     MarkNotificationDone(String),
     MuteNotification(String),
@@ -219,7 +219,7 @@ fn panel_command(state: &Arc<Mutex<AppState>>, command: String) -> Option<AppCom
         "copy-signin-code" => Some(AppCommand::CopySignInCode),
         "refresh" => Some(AppCommand::Refresh),
         "check-updates" => Some(AppCommand::CheckForUpdates),
-        "update-homebrew" => Some(AppCommand::UpdateWithHomebrew),
+        "install-update" => Some(AppCommand::InstallUpdate),
         "signout" => Some(AppCommand::SignOut),
         "inbox" => Some(AppCommand::OpenUrl(
             "https://github.com/notifications".to_string(),
@@ -296,22 +296,15 @@ async fn run_worker(
                     AppCommand::CheckForUpdates => {
                         spawn_update_check(&state, &proxy, true);
                     }
-                    AppCommand::UpdateWithHomebrew => {
-                        start_homebrew_update(&state, &proxy);
+                    AppCommand::InstallUpdate => {
+                        start_app_update(&state, &proxy);
                     }
                     AppCommand::SignOut => {
                         if let Err(error) = storage::delete_token() {
                             set_error(&state, format!("{error:#}"));
                         }
-                        let homebrew_cask_installed = {
-                            state
-                                .lock()
-                                .expect("state lock")
-                                .homebrew_cask_installed
-                        };
                         let mut guard = state.lock().expect("state lock");
                         *guard = AppState::default();
-                        guard.homebrew_cask_installed = homebrew_cask_installed;
                         token_cache = None;
                         notification_tracker.reset();
                         let _ = proxy.send_event(AppEvent::StateChanged);
@@ -562,13 +555,10 @@ async fn check_for_updates(
     proxy: &EventLoopProxy<AppEvent>,
     show_status: bool,
 ) {
-    let homebrew_cask_installed = tokio::task::spawn_blocking(updater::is_homebrew_cask_installed);
     let result = updater::check_latest_release(env!("CARGO_PKG_VERSION")).await;
-    let homebrew_cask_installed = homebrew_cask_installed.await.unwrap_or(false);
 
     let mut guard = state.lock().expect("state lock");
     guard.is_checking_updates = false;
-    guard.homebrew_cask_installed = homebrew_cask_installed;
     guard.last_update_checked_at = Some(Utc::now());
 
     match result {
@@ -591,15 +581,46 @@ async fn check_for_updates(
     let _ = proxy.send_event(AppEvent::StateChanged);
 }
 
-fn start_homebrew_update(state: &Arc<Mutex<AppState>>, proxy: &EventLoopProxy<AppEvent>) {
-    match updater::start_homebrew_update() {
+fn start_app_update(state: &Arc<Mutex<AppState>>, proxy: &EventLoopProxy<AppEvent>) {
+    let update = state.lock().expect("state lock").available_update.clone();
+
+    let Some(update) = update else {
+        let mut guard = state.lock().expect("state lock");
+        guard.available_update = None;
+        guard.update_status = Some("There is no update ready to install.".to_string());
+        let _ = proxy.send_event(AppEvent::StateChanged);
+        return;
+    };
+
+    let (Some(download_url), Some(download_name), Some(checksum_url)) = (
+        update.download_url,
+        update.download_name,
+        update.checksum_url,
+    ) else {
+        let mut guard = state.lock().expect("state lock");
+        guard.available_update = None;
+        guard.update_status =
+            Some("This release does not include a verified app update.".to_string());
+        let _ = proxy.send_event(AppEvent::StateChanged);
+        return;
+    };
+
+    match updater::start_app_update(
+        &download_url,
+        &download_name,
+        &checksum_url,
+        &update.latest_version,
+    ) {
         Ok(()) => {
-            state.lock().expect("state lock").update_status =
-                Some("Homebrew update started in Terminal".to_string());
+            let mut guard = state.lock().expect("state lock");
+            guard.available_update = None;
+            guard.update_status =
+                Some("Update started. Pullbell will restart when it is ready.".to_string());
         }
         Err(error) => {
-            state.lock().expect("state lock").update_status =
-                Some(format!("Homebrew update could not start: {error:#}"));
+            let mut guard = state.lock().expect("state lock");
+            guard.available_update = None;
+            guard.update_status = Some(format!("Update could not start: {error:#}"));
         }
     }
 

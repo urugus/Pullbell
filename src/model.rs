@@ -59,6 +59,9 @@ impl PullRequestItem {
 pub struct AvailableUpdate {
     pub latest_version: String,
     pub release_url: String,
+    pub download_url: Option<String>,
+    pub download_name: Option<String>,
+    pub checksum_url: Option<String>,
 }
 
 pub fn merge_pr_items(items: Vec<PullRequestItem>) -> Vec<PullRequestItem> {
