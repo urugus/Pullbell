@@ -16,7 +16,7 @@ use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use tray_icon::menu::{MenuEvent, MenuId};
-use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
+use tray_icon::{MouseButton, MouseButtonState, Rect, TrayIconEvent};
 
 mod menu;
 mod notifications;
@@ -61,6 +61,7 @@ fn main() -> Result<()> {
     let mut tray = menu::build_tray()?;
     let initial_snapshot = state.lock().expect("state lock").clone();
     let mut panel = panel::Panel::new(&event_loop, proxy.clone(), &initial_snapshot)?;
+    let mut last_tray_rect = None::<Rect>;
 
     let initial_token = storage::load_token()?;
     if initial_token.is_some() {
@@ -94,6 +95,7 @@ fn main() -> Result<()> {
                         ..
                     } = tray_event
                     {
+                        last_tray_rect = Some(rect);
                         panel.toggle_near(rect);
                     }
                 }
@@ -150,6 +152,9 @@ fn main() -> Result<()> {
                     &item.display_title(),
                     None,
                 );
+            }
+            Event::Opened { urls } if urls.iter().any(is_pullbell_show_url) => {
+                panel.show_near_or_default(last_tray_rect);
             }
             Event::UserEvent(AppEvent::PanelCommand(command)) => {
                 if command == "hide" {
@@ -211,6 +216,35 @@ fn main() -> Result<()> {
             _ => {}
         }
     });
+}
+
+fn is_pullbell_show_url(url: &url::Url) -> bool {
+    url.scheme() == "pullbell"
+        && url.host_str() == Some("show")
+        && matches!(url.path(), "" | "/")
+        && url.query().is_none()
+        && url.fragment().is_none()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_show_deeplink_only() {
+        assert!(is_pullbell_show_url(
+            &url::Url::parse("pullbell://show").unwrap()
+        ));
+        assert!(!is_pullbell_show_url(
+            &url::Url::parse("pullbell://toggle").unwrap()
+        ));
+        assert!(!is_pullbell_show_url(
+            &url::Url::parse("https://github.com/notifications").unwrap()
+        ));
+        assert!(!is_pullbell_show_url(
+            &url::Url::parse("pullbell://show?mode=toggle").unwrap()
+        ));
+    }
 }
 
 fn panel_command(state: &Arc<Mutex<AppState>>, command: String) -> Option<AppCommand> {

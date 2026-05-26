@@ -2091,6 +2091,7 @@ dependencies = [
  "tao",
  "tokio",
  "tray-icon",
+ "url",
  "urlencoding",
  "wry",
 ]

@@ -78,6 +78,14 @@ impl Panel {
         }
     }
 
+    pub(super) fn show_near_or_default(&mut self, rect: Option<Rect>) {
+        if let Some(rect) = rect {
+            self.show_near(rect);
+        } else {
+            self.show_near_screen_edge();
+        }
+    }
+
     pub(super) fn hide(&mut self) {
         self.window.set_visible(false);
         self.visible = false;
@@ -97,6 +105,31 @@ impl Panel {
 
         self.window
             .set_outer_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
+        self.window.set_visible(true);
+        self.window.set_focus();
+        self.visible = true;
+    }
+
+    fn show_near_screen_edge(&mut self) {
+        let monitor = self
+            .window
+            .primary_monitor()
+            .or_else(|| self.window.current_monitor());
+        let (x, y) = if let Some(monitor) = monitor {
+            let position = monitor.position();
+            let size = monitor.size();
+            (
+                f64::from(position.x) + f64::from(size.width) - PANEL_WIDTH - 16.0,
+                f64::from(position.y) + 8.0,
+            )
+        } else {
+            (8.0, 8.0)
+        };
+
+        self.window.set_outer_position(PhysicalPosition::new(
+            x.max(8.0).round() as i32,
+            y.max(8.0).round() as i32,
+        ));
         self.window.set_visible(true);
         self.window.set_focus();
         self.visible = true;

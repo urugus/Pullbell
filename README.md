@@ -131,6 +131,18 @@ cargo run
 Click the `PR` menu bar item, then choose `Sign in with GitHub`. The app opens
 GitHub's device login page and copies the user code to the clipboard.
 
+## Raycast Shortcut
+
+Pullbell supports the `pullbell://show` deeplink for showing and focusing the
+panel. To assign a keyboard shortcut through Raycast:
+
+1. Create a Raycast Quicklink.
+2. Set the name to `Show Pullbell`.
+3. Set the link to `pullbell://show`.
+4. Assign any hotkey from Raycast Settings under Shortcuts or Quicklinks.
+
+Leave the Raycast hotkey unset if you do not want a keyboard shortcut.
+
 ## Test
 
 ```sh

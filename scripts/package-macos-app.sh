@@ -47,6 +47,17 @@ cat > "$contents_dir/Info.plist" <<PLIST
   <string>Pullbell</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>com.github.urugus.pullbell</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>pullbell</string>
+      </array>
+    </dict>
+  </array>
   <key>CFBundleShortVersionString</key>
   <string>${version}</string>
   <key>CFBundleVersion</key>
