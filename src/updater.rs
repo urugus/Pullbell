@@ -110,7 +110,7 @@ pub fn start_app_update(
          /bin/sleep 1\n\
          restore() {{ if [ -e {} ] || [ -L {} ]; then /bin/rm -rf {}; /bin/mv {} {}; /usr/bin/open {} >/dev/null 2>&1 || true; fi; }}\n\
          /bin/rm -rf {}\n\
-         /bin/mv {} {}\n\
+         if ! /bin/mv {} {}; then /usr/bin/open {} >/dev/null 2>&1 || true; exit 1; fi\n\
          if ! /usr/bin/ditto {} {}; then restore; exit 1; fi\n\
          /usr/bin/xattr -dr com.apple.quarantine {} >/dev/null 2>&1 || true\n\
          if ! /usr/bin/open {}; then restore; exit 1; fi\n\
@@ -143,6 +143,7 @@ pub fn start_app_update(
         shell_quote_path(&backup_path),
         shell_quote_path(&app_path),
         shell_quote_path(&backup_path),
+        shell_quote_path(&app_path),
         shell_quote_path(&staged_app_path),
         shell_quote_path(&app_path),
         shell_quote_path(&app_path),
