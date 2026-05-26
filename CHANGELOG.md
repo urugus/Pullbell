@@ -7,8 +7,12 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
+## 0.7.0
+
 - Added app-style updates that verify and install the matching GitHub Release
   app archive, then restart without opening Terminal.
+- Added a `pullbell://show` deeplink so Raycast Quicklinks can show and focus
+  Pullbell with a user-configurable shortcut.
 - Removed the in-app Homebrew update action.
 
 ## 0.6.0
