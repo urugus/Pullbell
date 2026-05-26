@@ -62,8 +62,9 @@ Pullbell runs as a menu bar app. Open Pullbell, click the `PR` menu bar item,
 then choose `Sign in with GitHub`.
 
 Pullbell checks GitHub Releases for newer versions and shows an update notice in
-the menu when a release is available. Homebrew cask installs also get an
-`Update with Homebrew` menu action that starts the cask upgrade in Terminal.
+the menu when a release is available. Release app bundles can verify and install
+the matching update archive from the app, then restart Pullbell without opening
+Terminal.
 
 Release builds are ad-hoc signed so the app bundle has a valid local code
 signature without requiring a paid Apple Developer Program membership. Because
@@ -194,4 +195,4 @@ Next phases:
 - Add an in-app preview window for PR/comment bodies.
 - Add user-configurable polling interval and repo/org filters.
 - Add support for marking notification threads as done/read.
-- Package as a signed and notarized `.app` bundle with auto-update support.
+- Package as a signed and notarized `.app` bundle.

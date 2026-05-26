@@ -1161,9 +1161,9 @@ fn render_footer(snapshot: &AppState) -> String {
     }
 
     if let Some(update) = &snapshot.available_update {
-        if snapshot.homebrew_cask_installed {
+        if update.download_url.is_some() {
             html.push_str(
-                r#"<button class="tool" onclick="send('update-homebrew')">Update</button>"#,
+                r#"<button class="tool" onclick="send('install-update')">Update</button>"#,
             );
         }
         html.push_str(&format!(

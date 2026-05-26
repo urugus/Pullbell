@@ -2,12 +2,14 @@ use crate::model::AvailableUpdate;
 use anyhow::{Context, Result, anyhow};
 use reqwest::Client;
 use serde::Deserialize;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::LazyLock;
 use std::time::Duration;
 
 const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/urugus/Pullbell/releases/latest";
 pub const RELEASES_URL: &str = "https://github.com/urugus/Pullbell/releases";
+const BUNDLE_IDENTIFIER: &str = "com.github.urugus.pullbell";
 const USER_AGENT: &str = concat!("pullbell/", env!("CARGO_PKG_VERSION"));
 const UPDATE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -22,6 +24,13 @@ static RELEASE_CLIENT: LazyLock<Client> = LazyLock::new(|| {
 struct LatestRelease {
     tag_name: String,
     html_url: String,
+    assets: Vec<ReleaseAsset>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleaseAsset {
+    name: String,
+    browser_download_url: String,
 }
 
 pub async fn check_latest_release(current_version: &str) -> Result<Option<AvailableUpdate>> {
@@ -41,70 +50,141 @@ pub async fn check_latest_release(current_version: &str) -> Result<Option<Availa
 
     let latest_version = release.tag_name.trim_start_matches('v');
     if is_newer_version(current_version, latest_version) {
+        let asset_name = app_archive_asset_name(latest_version);
+        let app_asset = release.assets.iter().find(|asset| asset.name == asset_name);
+        let checksum_url = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == "checksums.txt")
+            .map(|asset| asset.browser_download_url.clone());
+        let download_url = app_asset
+            .filter(|_| checksum_url.is_some())
+            .map(|asset| asset.browser_download_url.clone());
+
         Ok(Some(AvailableUpdate {
             latest_version: latest_version.to_string(),
             release_url: release.html_url,
+            download_url,
+            download_name: app_asset
+                .filter(|_| checksum_url.is_some())
+                .map(|_| asset_name),
+            checksum_url,
         }))
     } else {
         Ok(None)
     }
 }
 
-pub fn is_homebrew_cask_installed() -> bool {
-    brew_candidates().iter().any(|brew| {
-        Command::new(brew)
-            .args(["list", "--cask", "pullbell"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success())
-    })
-}
-
-pub fn start_homebrew_update() -> Result<()> {
-    let brew = brew_candidates()
-        .into_iter()
-        .find(|candidate| {
-            Command::new(candidate)
-                .arg("--version")
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .is_ok_and(|status| status.success())
-        })
-        .ok_or_else(|| anyhow!("Homebrew was not found"))?;
-
+pub fn start_app_update(
+    download_url: &str,
+    download_name: &str,
+    checksum_url: &str,
+    latest_version: &str,
+) -> Result<()> {
+    let app_path = current_app_bundle_path()?;
+    let temp_dir = std::env::temp_dir().join(format!("pullbell-update-{}", std::process::id()));
+    let archive_path = temp_dir.join(download_name);
+    let checksums_path = temp_dir.join("checksums.txt");
+    let selected_checksum_path = temp_dir.join("selected-checksum.txt");
+    let staging_dir = temp_dir.join("staging");
+    let staged_app_path = staging_dir.join("Pullbell.app");
+    let staged_info_plist_path = staged_app_path.join("Contents/Info.plist");
+    let staged_executable_path = staged_app_path.join("Contents/MacOS/pullbell");
+    let backup_path =
+        app_path.with_file_name(format!(".Pullbell.app.backup.{}", std::process::id()));
     let shell_command = format!(
-        "printf 'Updating Pullbell with Homebrew...\\n'; \
-         osascript -e 'tell application id \"com.github.urugus.pullbell\" to quit' >/dev/null 2>&1; \
-         {} update; \
-         {} upgrade --cask pullbell; \
-         open -a Pullbell",
-        shell_quote(&brew),
-        shell_quote(&brew)
-    );
-    let apple_script = format!(
-        "tell application \"Terminal\" to do script \"{}\"",
-        apple_script_string(&shell_command)
+        "set -eu\n\
+         cleanup() {{ /bin/rm -rf {}; }}\n\
+         trap cleanup EXIT\n\
+         /bin/rm -rf {}\n\
+         /bin/mkdir -p {}\n\
+         /usr/bin/curl -fL --retry 3 {} -o {}\n\
+         /usr/bin/curl -fL --retry 3 {} -o {}\n\
+         /usr/bin/grep -F {} {} > {}\n\
+         (cd {} && /usr/bin/shasum -a 256 -c {})\n\
+         /usr/bin/ditto -x -k {} {}\n\
+         /usr/bin/test -x {}\n\
+         /usr/bin/test \"$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' {})\" = {}\n\
+         /usr/bin/test \"$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' {})\" = {}\n\
+         /usr/bin/osascript -e 'tell application id \"com.github.urugus.pullbell\" to quit' >/dev/null 2>&1 || true\n\
+         /bin/sleep 1\n\
+         restore() {{ if [ -e {} ] || [ -L {} ]; then /bin/rm -rf {}; /bin/mv {} {}; /usr/bin/open {} >/dev/null 2>&1 || true; fi; }}\n\
+         /bin/rm -rf {}\n\
+         /bin/mv {} {}\n\
+         if ! /usr/bin/ditto {} {}; then restore; exit 1; fi\n\
+         /usr/bin/xattr -dr com.apple.quarantine {} >/dev/null 2>&1 || true\n\
+         if ! /usr/bin/open {}; then restore; exit 1; fi\n\
+         /bin/rm -rf {}\n",
+        shell_quote_path(&temp_dir),
+        shell_quote_path(&temp_dir),
+        shell_quote_path(&staging_dir),
+        shell_quote(download_url),
+        shell_quote_path(&archive_path),
+        shell_quote(checksum_url),
+        shell_quote_path(&checksums_path),
+        shell_quote(&format!("  {download_name}")),
+        shell_quote_path(&checksums_path),
+        shell_quote_path(&selected_checksum_path),
+        shell_quote_path(&temp_dir),
+        shell_quote_path(&selected_checksum_path),
+        shell_quote_path(&archive_path),
+        shell_quote_path(&staging_dir),
+        shell_quote_path(&staged_executable_path),
+        shell_quote_path(&staged_info_plist_path),
+        shell_quote(BUNDLE_IDENTIFIER),
+        shell_quote_path(&staged_info_plist_path),
+        shell_quote(latest_version),
+        shell_quote_path(&backup_path),
+        shell_quote_path(&backup_path),
+        shell_quote_path(&app_path),
+        shell_quote_path(&backup_path),
+        shell_quote_path(&app_path),
+        shell_quote_path(&app_path),
+        shell_quote_path(&backup_path),
+        shell_quote_path(&app_path),
+        shell_quote_path(&backup_path),
+        shell_quote_path(&staged_app_path),
+        shell_quote_path(&app_path),
+        shell_quote_path(&app_path),
+        shell_quote_path(&app_path),
+        shell_quote_path(&backup_path)
     );
 
-    Command::new("osascript")
-        .arg("-e")
-        .arg("tell application \"Terminal\" to activate")
-        .arg("-e")
-        .arg(apple_script)
+    Command::new("/bin/sh")
+        .arg("-c")
+        .arg(shell_command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
-        .context("starting the Homebrew update in Terminal")?;
+        .context("starting the app updater")?;
 
     Ok(())
 }
 
-fn brew_candidates() -> Vec<String> {
-    vec![
-        "/opt/homebrew/bin/brew".to_string(),
-        "/usr/local/bin/brew".to_string(),
-        "brew".to_string(),
-    ]
+fn current_app_bundle_path() -> Result<PathBuf> {
+    let executable_path = std::env::current_exe().context("locating the running executable")?;
+    executable_path
+        .ancestors()
+        .find(|path| path.extension().is_some_and(|extension| extension == "app"))
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow!("Pullbell is not running from an app bundle"))
+}
+
+fn app_archive_asset_name(version: &str) -> String {
+    format!("pullbell-{version}-{}.zip", macos_target_triple())
+}
+
+fn macos_target_triple() -> &'static str {
+    #[cfg(target_arch = "aarch64")]
+    {
+        "aarch64-apple-darwin"
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        "x86_64-apple-darwin"
+    }
 }
 
 fn is_newer_version(current: &str, latest: &str) -> bool {
@@ -136,8 +216,8 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-fn apple_script_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+fn shell_quote_path(value: &std::path::Path) -> String {
+    shell_quote(&value.to_string_lossy())
 }
 
 #[cfg(test)]
@@ -173,8 +253,16 @@ mod tests {
             "'/opt/homebrew/bin/brew'"
         );
         assert_eq!(
-            apple_script_string("a \"quoted\" value"),
-            "a \\\"quoted\\\" value"
+            shell_quote("a 'quoted' value"),
+            "'a '\\''quoted'\\'' value'"
+        );
+    }
+
+    #[test]
+    fn builds_platform_release_archive_name() {
+        assert_eq!(
+            app_archive_asset_name("1.2.3"),
+            format!("pullbell-1.2.3-{}.zip", macos_target_triple())
         );
     }
 }

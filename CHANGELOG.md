@@ -7,7 +7,9 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
-Nothing yet.
+- Added app-style updates that verify and install the matching GitHub Release
+  app archive, then restart without opening Terminal.
+- Removed the in-app Homebrew update action.
 
 ## 0.6.0
 
