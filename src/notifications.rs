@@ -1,9 +1,9 @@
-use pullbell::model::{PrKind, PullRequestItem};
-use std::collections::HashSet;
+use pullbell::model::PullRequestItem;
+use std::collections::HashMap;
 
 #[derive(Debug, Default)]
 pub(super) struct NotificationTracker {
-    known_ids: HashSet<String>,
+    known_actionable: HashMap<String, bool>,
     bootstrapped: bool,
 }
 
@@ -13,8 +13,12 @@ impl NotificationTracker {
             items
                 .iter()
                 .filter(|item| {
-                    !self.known_ids.contains(&item.id)
-                        && matches!(item.kind, PrKind::ReviewRequested | PrKind::Notification)
+                    item.is_todo()
+                        && !self
+                            .known_actionable
+                            .get(&item.id)
+                            .copied()
+                            .unwrap_or(false)
                 })
                 .cloned()
                 .collect()
@@ -22,16 +26,16 @@ impl NotificationTracker {
             Vec::new()
         };
 
-        self.known_ids.clear();
-        self.known_ids
-            .extend(items.iter().map(|item| item.id.clone()));
+        self.known_actionable.clear();
+        self.known_actionable
+            .extend(items.iter().map(|item| (item.id.clone(), item.is_todo())));
         self.bootstrapped = true;
 
         notifications
     }
 
     pub(super) fn reset(&mut self) {
-        self.known_ids.clear();
+        self.known_actionable.clear();
         self.bootstrapped = false;
     }
 }
@@ -39,6 +43,7 @@ impl NotificationTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pullbell::model::PrKind;
 
     fn item(id: &str, kind: PrKind) -> PullRequestItem {
         PullRequestItem {
@@ -83,6 +88,27 @@ mod tests {
 
         let ids: Vec<_> = notifications.into_iter().map(|item| item.id).collect();
         assert_eq!(ids, vec!["4", "5"]);
+    }
+
+    #[test]
+    fn reports_items_that_become_actionable() {
+        let mut tracker = NotificationTracker::default();
+        tracker.new_notifications(&[item("1", PrKind::Authored)]);
+
+        let notifications = tracker.new_notifications(&[item("1", PrKind::Notification)]);
+
+        let ids: Vec<_> = notifications.into_iter().map(|item| item.id).collect();
+        assert_eq!(ids, vec!["1"]);
+    }
+
+    #[test]
+    fn does_not_report_items_that_remain_actionable() {
+        let mut tracker = NotificationTracker::default();
+        tracker.new_notifications(&[item("1", PrKind::Notification)]);
+
+        let notifications = tracker.new_notifications(&[item("1", PrKind::ReviewRequested)]);
+
+        assert!(notifications.is_empty());
     }
 
     #[test]

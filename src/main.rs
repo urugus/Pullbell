@@ -42,6 +42,7 @@ enum AppCommand {
     Refresh,
     CheckForUpdates,
     InstallUpdate,
+    SignInFinished(Option<String>),
     SignOut,
     MarkNotificationDone(String),
     MuteNotification(String),
@@ -71,6 +72,7 @@ fn main() -> Result<()> {
 
     runtime.spawn(run_worker(
         command_rx,
+        command_tx.clone(),
         Arc::clone(&state),
         proxy.clone(),
         client_id,
@@ -299,14 +301,19 @@ fn notification_action_label(action: &str) -> &'static str {
 
 async fn run_worker(
     mut command_rx: mpsc::UnboundedReceiver<AppCommand>,
+    command_tx: mpsc::UnboundedSender<AppCommand>,
     state: Arc<Mutex<AppState>>,
     proxy: EventLoopProxy<AppEvent>,
     client_id: Option<String>,
     mut token_cache: Option<String>,
 ) {
     let mut notification_tracker = NotificationTracker::default();
-    let mut poll = tokio::time::interval(POLL_INTERVAL);
-    let mut update_poll = tokio::time::interval(UPDATE_CHECK_INTERVAL);
+    let mut poll =
+        tokio::time::interval_at(tokio::time::Instant::now() + POLL_INTERVAL, POLL_INTERVAL);
+    let mut update_poll = tokio::time::interval_at(
+        tokio::time::Instant::now() + UPDATE_CHECK_INTERVAL,
+        UPDATE_CHECK_INTERVAL,
+    );
 
     loop {
         tokio::select! {
@@ -319,7 +326,17 @@ async fn run_worker(
             Some(command) = command_rx.recv() => {
                 match command {
                     AppCommand::SignIn => {
-                        if let Some(token) = sign_in(&state, &proxy, client_id.clone()).await {
+                        let state = Arc::clone(&state);
+                        let proxy = proxy.clone();
+                        let client_id = client_id.clone();
+                        let command_tx = command_tx.clone();
+                        tokio::spawn(async move {
+                            let token = sign_in(&state, &proxy, client_id).await;
+                            let _ = command_tx.send(AppCommand::SignInFinished(token));
+                        });
+                    }
+                    AppCommand::SignInFinished(token) => {
+                        if let Some(token) = token {
                             token_cache = Some(token);
                             refresh(&state, &proxy, &mut notification_tracker, token_cache.as_deref()).await;
                         }
