@@ -9,6 +9,7 @@ use pullbell::storage;
 use pullbell::updater;
 use std::collections::HashMap;
 use std::fs;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tao::event::{Event, StartCause, WindowEvent};
@@ -311,7 +312,7 @@ async fn run_worker(
     mut token_cache: Option<String>,
 ) {
     let mut notification_tracker = NotificationTracker::default();
-    let mut next_sign_in_attempt_id = 1;
+    let sign_in_generation = Arc::new(AtomicU64::new(0));
     let mut active_sign_in_attempt = None::<u64>;
     let mut poll =
         tokio::time::interval_at(tokio::time::Instant::now() + POLL_INTERVAL, POLL_INTERVAL);
@@ -335,16 +336,24 @@ async fn run_worker(
                             continue;
                         }
 
-                        let attempt_id = next_sign_in_attempt_id;
-                        next_sign_in_attempt_id += 1;
+                        let attempt_id = sign_in_generation.fetch_add(1, Ordering::SeqCst) + 1;
                         active_sign_in_attempt = Some(attempt_id);
                         let state = Arc::clone(&state);
                         let proxy = proxy.clone();
                         let client_id = client_id.clone();
                         let command_tx = command_tx.clone();
+                        let sign_in_generation = Arc::clone(&sign_in_generation);
                         tokio::spawn(async move {
-                            let token = sign_in(&state, &proxy, client_id).await;
-                            let _ = command_tx.send(AppCommand::SignInFinished { attempt_id, token });
+                            let token = sign_in(
+                                &state,
+                                &proxy,
+                                client_id,
+                                attempt_id,
+                                &sign_in_generation,
+                            )
+                            .await;
+                            let _ =
+                                command_tx.send(AppCommand::SignInFinished { attempt_id, token });
                         });
                     }
                     AppCommand::SignInFinished { attempt_id, token } => {
@@ -354,6 +363,19 @@ async fn run_worker(
                         active_sign_in_attempt = None;
 
                         if let Some(token) = token {
+                            if let Err(error) = storage::save_token(&token) {
+                                set_error(&state, format!("{error:#}"));
+                                let _ = proxy.send_event(AppEvent::StateChanged);
+                                continue;
+                            }
+
+                            {
+                                let mut guard = state.lock().expect("state lock");
+                                guard.token_loaded = true;
+                                guard.last_error = None;
+                                guard.pending_auth = None;
+                            }
+                            let _ = proxy.send_event(AppEvent::StateChanged);
                             token_cache = Some(token);
                             refresh(&state, &proxy, &mut notification_tracker, token_cache.as_deref()).await;
                         }
@@ -369,6 +391,7 @@ async fn run_worker(
                     }
                     AppCommand::SignOut => {
                         active_sign_in_attempt = None;
+                        sign_in_generation.fetch_add(1, Ordering::SeqCst);
                         if let Err(error) = storage::delete_token() {
                             set_error(&state, format!("{error:#}"));
                         }
@@ -457,6 +480,8 @@ async fn sign_in(
     state: &Arc<Mutex<AppState>>,
     proxy: &EventLoopProxy<AppEvent>,
     client_id: Option<String>,
+    attempt_id: u64,
+    sign_in_generation: &AtomicU64,
 ) -> Option<String> {
     let Some(client_id) = client_id else {
         set_error(
@@ -472,11 +497,19 @@ async fn sign_in(
     let code = match client.request_device_code().await {
         Ok(code) => code,
         Err(error) => {
+            if sign_in_is_stale(sign_in_generation, attempt_id) {
+                return None;
+            }
+
             set_error(state, format!("{error:#}"));
             let _ = proxy.send_event(AppEvent::StateChanged);
             return None;
         }
     };
+
+    if sign_in_is_stale(sign_in_generation, attempt_id) {
+        return None;
+    }
 
     if let Ok(mut clipboard) = arboard::Clipboard::new() {
         let _ = clipboard.set_text(code.user_code.clone());
@@ -504,26 +537,27 @@ async fn sign_in(
 
     match client.wait_for_token(&code).await {
         Ok(token) => {
-            if let Err(error) = storage::save_token(&token.token) {
-                set_error(state, format!("{error:#}"));
-                let _ = proxy.send_event(AppEvent::StateChanged);
-                None
-            } else {
-                let mut guard = state.lock().expect("state lock");
-                guard.token_loaded = true;
-                guard.last_error = None;
-                guard.pending_auth = None;
-                let _ = proxy.send_event(AppEvent::StateChanged);
-                Some(token.token)
+            if sign_in_is_stale(sign_in_generation, attempt_id) {
+                return None;
             }
+
+            Some(token.token)
         }
         Err(error) => {
+            if sign_in_is_stale(sign_in_generation, attempt_id) {
+                return None;
+            }
+
             set_error(state, format!("{error:#}"));
             state.lock().expect("state lock").pending_auth = None;
             let _ = proxy.send_event(AppEvent::StateChanged);
             None
         }
     }
+}
+
+fn sign_in_is_stale(sign_in_generation: &AtomicU64, attempt_id: u64) -> bool {
+    sign_in_generation.load(Ordering::SeqCst) != attempt_id
 }
 
 async fn refresh(
