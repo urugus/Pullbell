@@ -42,7 +42,10 @@ enum AppCommand {
     Refresh,
     CheckForUpdates,
     InstallUpdate,
-    SignInFinished(Option<String>),
+    SignInFinished {
+        attempt_id: u64,
+        token: Option<String>,
+    },
     SignOut,
     MarkNotificationDone(String),
     MuteNotification(String),
@@ -308,12 +311,11 @@ async fn run_worker(
     mut token_cache: Option<String>,
 ) {
     let mut notification_tracker = NotificationTracker::default();
+    let mut next_sign_in_attempt_id = 1;
+    let mut active_sign_in_attempt = None::<u64>;
     let mut poll =
         tokio::time::interval_at(tokio::time::Instant::now() + POLL_INTERVAL, POLL_INTERVAL);
-    let mut update_poll = tokio::time::interval_at(
-        tokio::time::Instant::now() + UPDATE_CHECK_INTERVAL,
-        UPDATE_CHECK_INTERVAL,
-    );
+    let mut update_poll = tokio::time::interval(UPDATE_CHECK_INTERVAL);
 
     loop {
         tokio::select! {
@@ -326,16 +328,31 @@ async fn run_worker(
             Some(command) = command_rx.recv() => {
                 match command {
                     AppCommand::SignIn => {
+                        if active_sign_in_attempt.is_some() {
+                            let mut guard = state.lock().expect("state lock");
+                            guard.last_status = Some("GitHub sign-in is already in progress.".to_string());
+                            let _ = proxy.send_event(AppEvent::StateChanged);
+                            continue;
+                        }
+
+                        let attempt_id = next_sign_in_attempt_id;
+                        next_sign_in_attempt_id += 1;
+                        active_sign_in_attempt = Some(attempt_id);
                         let state = Arc::clone(&state);
                         let proxy = proxy.clone();
                         let client_id = client_id.clone();
                         let command_tx = command_tx.clone();
                         tokio::spawn(async move {
                             let token = sign_in(&state, &proxy, client_id).await;
-                            let _ = command_tx.send(AppCommand::SignInFinished(token));
+                            let _ = command_tx.send(AppCommand::SignInFinished { attempt_id, token });
                         });
                     }
-                    AppCommand::SignInFinished(token) => {
+                    AppCommand::SignInFinished { attempt_id, token } => {
+                        if active_sign_in_attempt != Some(attempt_id) {
+                            continue;
+                        }
+                        active_sign_in_attempt = None;
+
                         if let Some(token) = token {
                             token_cache = Some(token);
                             refresh(&state, &proxy, &mut notification_tracker, token_cache.as_deref()).await;
@@ -351,6 +368,7 @@ async fn run_worker(
                         start_app_update(&state, &proxy);
                     }
                     AppCommand::SignOut => {
+                        active_sign_in_attempt = None;
                         if let Err(error) = storage::delete_token() {
                             set_error(&state, format!("{error:#}"));
                         }
