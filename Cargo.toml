@@ -1,6 +1,6 @@
 [package]
 name = "pullbell"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2024"
 description = "A macOS menu bar app for GitHub pull request notifications with OAuth device flow."
 license = "MIT"
