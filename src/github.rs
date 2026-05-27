@@ -7,6 +7,11 @@ use serde::{Deserialize, Serialize};
 const API_VERSION: &str = "2022-11-28";
 const USER_AGENT: &str = concat!("pullbell/", env!("CARGO_PKG_VERSION"));
 const MAX_NOTIFICATION_PREVIEWS: usize = 12;
+const SEARCH_PAGE_SIZE: usize = 50;
+const NOTIFICATIONS_PAGE_SIZE: usize = 100;
+const TEAMS_PAGE_SIZE: usize = 100;
+const MAX_SEARCH_PAGES: u32 = 20;
+const MAX_LIST_PAGES: u32 = 10;
 
 #[derive(Clone)]
 pub struct GitHubClient {
@@ -122,25 +127,26 @@ impl GitHubClient {
             login: String,
         }
 
+        let mut pull_requests = Vec::new();
         let encoded_query = urlencoding::encode(query);
-        let url = format!(
-            "https://api.github.com/search/issues?q={encoded_query}&sort=updated&order=desc&per_page=50"
-        );
-        let response = self
-            .get(&url)
-            .send()
-            .await
-            .with_context(|| format!("searching GitHub pull requests: {query}"))?
-            .error_for_status()
-            .with_context(|| format!("GitHub rejected search query: {query}"))?
-            .json::<SearchResponse>()
-            .await
-            .context("decoding GitHub search response")?;
 
-        Ok(response
-            .items
-            .into_iter()
-            .map(|item| {
+        for page in 1..=MAX_SEARCH_PAGES {
+            let url = format!(
+                "https://api.github.com/search/issues?q={encoded_query}&sort=updated&order=desc&per_page={SEARCH_PAGE_SIZE}&page={page}"
+            );
+            let response = self
+                .get(&url)
+                .send()
+                .await
+                .with_context(|| format!("searching GitHub pull requests: {query}"))?
+                .error_for_status()
+                .with_context(|| format!("GitHub rejected search query: {query}"))?
+                .json::<SearchResponse>()
+                .await
+                .context("decoding GitHub search response")?;
+
+            let item_count = response.items.len();
+            pull_requests.extend(response.items.into_iter().map(|item| {
                 let repo = repo_name_from_repository_url(&item.repository_url);
                 PullRequestItem {
                     id: pr_id(&repo, item.number),
@@ -155,8 +161,14 @@ impl GitHubClient {
                     reason: Some(search_reason(&kind).to_string()),
                     preview: item.body.and_then(clean_preview),
                 }
-            })
-            .collect())
+            }));
+
+            if item_count < SEARCH_PAGE_SIZE {
+                break;
+            }
+        }
+
+        Ok(pull_requests)
     }
 
     async fn pull_request_notifications(&self) -> Result<Vec<PullRequestItem>> {
@@ -183,16 +195,28 @@ impl GitHubClient {
             kind: String,
         }
 
-        let notifications = self
-            .get("https://api.github.com/notifications?per_page=100")
-            .send()
-            .await
-            .context("loading GitHub notifications")?
-            .error_for_status()
-            .context("GitHub rejected notifications request")?
-            .json::<Vec<Notification>>()
-            .await
-            .context("decoding GitHub notifications response")?;
+        let mut notifications = Vec::new();
+        for page in 1..=MAX_LIST_PAGES {
+            let url = format!(
+                "https://api.github.com/notifications?per_page={NOTIFICATIONS_PAGE_SIZE}&page={page}"
+            );
+            let page_notifications = self
+                .get(&url)
+                .send()
+                .await
+                .context("loading GitHub notifications")?
+                .error_for_status()
+                .context("GitHub rejected notifications request")?
+                .json::<Vec<Notification>>()
+                .await
+                .context("decoding GitHub notifications response")?;
+            let notification_count = page_notifications.len();
+            notifications.extend(page_notifications);
+
+            if notification_count < NOTIFICATIONS_PAGE_SIZE {
+                break;
+            }
+        }
 
         let mut items = Vec::new();
         for (index, notification) in notifications
@@ -351,15 +375,29 @@ impl GitHubClient {
     }
 
     async fn teams(&self) -> Result<Vec<Team>> {
-        self.get("https://api.github.com/user/teams?per_page=100")
-            .send()
-            .await
-            .context("loading GitHub teams")?
-            .error_for_status()
-            .context("GitHub rejected teams request")?
-            .json::<Vec<Team>>()
-            .await
-            .context("decoding GitHub teams response")
+        let mut teams = Vec::new();
+        for page in 1..=MAX_LIST_PAGES {
+            let url =
+                format!("https://api.github.com/user/teams?per_page={TEAMS_PAGE_SIZE}&page={page}");
+            let page_teams = self
+                .get(&url)
+                .send()
+                .await
+                .context("loading GitHub teams")?
+                .error_for_status()
+                .context("GitHub rejected teams request")?
+                .json::<Vec<Team>>()
+                .await
+                .context("decoding GitHub teams response")?;
+            let team_count = page_teams.len();
+            teams.extend(page_teams);
+
+            if team_count < TEAMS_PAGE_SIZE {
+                break;
+            }
+        }
+
+        Ok(teams)
     }
 
     fn get(&self, url: &str) -> reqwest::RequestBuilder {
