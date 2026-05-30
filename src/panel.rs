@@ -70,6 +70,10 @@ impl Panel {
         self.window.id()
     }
 
+    pub(super) fn is_visible(&self) -> bool {
+        self.visible
+    }
+
     pub(super) fn toggle_near(&mut self, rect: Rect) {
         if self.visible {
             self.hide();
