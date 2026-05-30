@@ -7,6 +7,8 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
+## 0.9.2
+
 - Updated the README to match the current WebView panel, local Done/Undo,
   Settings, update, and release behavior.
 
