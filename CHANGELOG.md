@@ -7,6 +7,8 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
+## 0.8.0
+
 - Added a selected-row copy control and `c` keyboard shortcut for copying the
   selected pull request URL.
 
