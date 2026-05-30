@@ -10,7 +10,7 @@ use pullbell::updater;
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tao::event::{Event, StartCause, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tokio::runtime::Runtime;
@@ -25,6 +25,7 @@ use notifications::NotificationTracker;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(300);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60 * 12);
+const PANEL_BLUR_GRACE_PERIOD: Duration = Duration::from_millis(300);
 const DEFAULT_CLIENT_ID: &str = "Ov23liYs8QgtSc19mkZs";
 
 #[derive(Debug, Clone)]
@@ -65,6 +66,7 @@ fn main() -> Result<()> {
     let initial_snapshot = state.lock().expect("state lock").clone();
     let mut panel = panel::Panel::new(&event_loop, proxy.clone(), &initial_snapshot)?;
     let mut last_tray_rect = None::<Rect>;
+    let mut ignore_panel_blur_until = None::<Instant>;
 
     let initial_token = storage::load_token()?;
     if initial_token.is_some() {
@@ -99,7 +101,13 @@ fn main() -> Result<()> {
                     } = tray_event
                     {
                         last_tray_rect = Some(rect);
+                        let was_visible = panel.is_visible();
                         panel.toggle_near(rect);
+                        ignore_panel_blur_until = if was_visible {
+                            None
+                        } else {
+                            Some(Instant::now() + PANEL_BLUR_GRACE_PERIOD)
+                        };
                     }
                 }
             }
@@ -122,6 +130,7 @@ fn main() -> Result<()> {
             }
             Event::Opened { urls } if urls.iter().any(is_pullbell_show_url) => {
                 panel.show_near_or_default(last_tray_rect);
+                ignore_panel_blur_until = Some(Instant::now() + PANEL_BLUR_GRACE_PERIOD);
             }
             Event::UserEvent(AppEvent::PanelCommand(command)) => {
                 if command == "hide" {
@@ -181,11 +190,19 @@ fn main() -> Result<()> {
                 event: WindowEvent::Focused(false),
                 ..
             } if window_id == panel.window_id() => {
+                if should_ignore_panel_blur(Instant::now(), ignore_panel_blur_until) {
+                    return;
+                }
+                ignore_panel_blur_until = None;
                 panel.hide();
             }
             _ => {}
         }
     });
+}
+
+fn should_ignore_panel_blur(now: Instant, ignore_until: Option<Instant>) -> bool {
+    ignore_until.is_some_and(|ignore_until| now < ignore_until)
 }
 
 fn is_pullbell_show_url(url: &url::Url) -> bool {
@@ -214,6 +231,18 @@ mod tests {
         assert!(!is_pullbell_show_url(
             &url::Url::parse("pullbell://show?mode=toggle").unwrap()
         ));
+    }
+
+    #[test]
+    fn ignores_panel_blur_only_during_grace_period() {
+        let now = Instant::now();
+
+        assert!(should_ignore_panel_blur(
+            now,
+            Some(now + PANEL_BLUR_GRACE_PERIOD)
+        ));
+        assert!(!should_ignore_panel_blur(now, Some(now)));
+        assert!(!should_ignore_panel_blur(now, None));
     }
 
     #[test]
