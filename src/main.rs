@@ -653,10 +653,10 @@ async fn refresh(
                 guard.pull_requests = items;
                 drop(guard);
 
-                if let Some(done_prs) = done_prs_to_save {
-                    if let Err(error) = storage::save_done_prs(&done_prs) {
-                        set_error(state, format!("{error:#}"));
-                    }
+                if let Some(done_prs) = done_prs_to_save
+                    && let Err(error) = storage::save_done_prs(&done_prs)
+                {
+                    set_error(state, format!("{error:#}"));
                 }
             }
             Err(error) => set_error(state, format!("{error:#}")),
