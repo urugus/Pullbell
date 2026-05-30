@@ -283,10 +283,10 @@ button {{
   width: 100%;
   min-height: 62px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px;
-  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) 30px auto;
+  gap: 10px;
   align-items: center;
-  padding: 0 6px 0 0;
+  padding: 9px 10px 9px 0;
   border: 0;
   border-radius: 10px;
   color: inherit;
@@ -305,24 +305,26 @@ button {{
   background: #313640;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.10);
 }}
-.row-main {{
+.row-open {{
   min-width: 0;
-  min-height: 62px;
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
+  grid-template-columns: 34px minmax(0, 1fr);
   gap: 10px;
   align-items: center;
-  padding: 9px 0 9px 10px;
+  padding: 0 0 0 10px;
   border: 0;
   color: inherit;
   background: transparent;
   text-align: left;
 }}
-.row-main:focus {{
+.row-open:focus {{
   outline: none;
 }}
-.row-main:active {{
+.row-open:active {{
   color: inherit;
+}}
+.row-main {{
+  min-width: 0;
 }}
 .row-copy {{
   width: 28px;
@@ -1156,7 +1158,7 @@ fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
     let copy_command = format!("copy-url:{}", item.url);
 
     format!(
-        r#"<div class="row" data-selectable="true" data-cmd="{}" data-copy-cmd="{}" data-repo="{}" data-reason="{}" data-author="{}" data-preview-title="{}" data-preview-meta="{}" data-preview-body="{}"{}{} tabindex="-1" aria-selected="false" onfocusin="window.PullbellSelectElement(this)"><button class="row-main" type="button" tabindex="-1" data-row-shortcut="true" data-cmd="{}" onclick="send(this.dataset.cmd)"><div class="badge {}">{}</div><div class="main"><div class="meta"><span class="repo">{}</span><span class="dot"></span><span>#{}</span><span class="dot"></span><span>{}</span></div><div class="title">{}</div></div><div class="age">{}</div></button><button class="row-copy" type="button" title="Copy PR URL" aria-label="Copy PR URL" data-cmd="{}" onclick="event.stopPropagation(); send(this.dataset.cmd)">{}</button></div>"#,
+        r#"<div class="row" data-selectable="true" data-cmd="{}" data-copy-cmd="{}" data-repo="{}" data-reason="{}" data-author="{}" data-preview-title="{}" data-preview-meta="{}" data-preview-body="{}"{}{} tabindex="-1" aria-selected="false" onfocusin="window.PullbellSelectElement(this)"><button class="row-open" type="button" tabindex="-1" data-row-shortcut="true" data-cmd="{}" onclick="send(this.dataset.cmd)"><div class="badge {}">{}</div><div class="row-main"><div class="meta"><span class="repo">{}</span><span class="dot"></span><span>#{}</span><span class="dot"></span><span>{}</span></div><div class="title">{}</div></div></button><button class="row-copy" type="button" title="Copy PR URL" aria-label="Copy PR URL" data-cmd="{}" onclick="event.stopPropagation(); send(this.dataset.cmd)">{}</button><div class="age">{}</div></div>"#,
         escape_attr(&command),
         escape_attr(&copy_command),
         escape_attr(&item.repo),
@@ -1174,9 +1176,9 @@ fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
         item.number,
         escape_html(label),
         escape_html(&item.title),
-        escape_html(&age),
         escape_attr(&copy_command),
-        copy_icon()
+        copy_icon(),
+        escape_html(&age)
     )
 }
 
@@ -1545,10 +1547,22 @@ mod tests {
             .expect("copy button markup");
 
         assert!(row.contains(
-            "class=\"row-main\" type=\"button\" tabindex=\"-1\" data-row-shortcut=\"true\""
+            "class=\"row-open\" type=\"button\" tabindex=\"-1\" data-row-shortcut=\"true\""
         ));
         assert!(!copy_button.contains("data-row-shortcut=\"true\""));
         assert!(!copy_button.contains("tabindex=\"-1\""));
+    }
+
+    #[test]
+    fn copy_control_renders_before_age() {
+        let row = render_item(
+            &item(PrKind::ReviewRequested),
+            Utc.timestamp_opt(7_200, 0).unwrap(),
+        );
+        let copy_index = row.find("class=\"row-copy\"").expect("copy button");
+        let age_index = row.find("class=\"age\"").expect("age");
+
+        assert!(copy_index < age_index);
     }
 
     #[test]
