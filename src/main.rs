@@ -58,9 +58,13 @@ fn main() -> Result<()> {
     let runtime = Runtime::new().context("starting async runtime")?;
     let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
-    let local_done_prs = storage::load_done_prs()?;
+    let (local_done_prs, last_error) = match storage::load_done_prs() {
+        Ok(done_prs) => (done_prs, None),
+        Err(error) => (Default::default(), Some(format!("{error:#}"))),
+    };
     let state = Arc::new(Mutex::new(AppState {
         local_done_prs,
+        last_error,
         ..Default::default()
     }));
     let (command_tx, command_rx) = mpsc::unbounded_channel();
@@ -429,16 +433,20 @@ async fn run_worker(
                     AppCommand::SignOut => {
                         active_sign_in_attempt = None;
                         sign_in_generation.fetch_add(1, Ordering::SeqCst);
-                        let mut signout_error = None;
+                        let mut signout_errors = Vec::new();
                         if let Err(error) = storage::delete_token() {
-                            signout_error = Some(format!("{error:#}"));
+                            signout_errors.push(format!("{error:#}"));
                         }
                         if let Err(error) = storage::delete_done_prs() {
-                            signout_error = Some(format!("{error:#}"));
+                            signout_errors.push(format!("{error:#}"));
                         }
                         let mut guard = state.lock().expect("state lock");
                         *guard = AppState::default();
-                        guard.last_error = signout_error;
+                        guard.last_error = if signout_errors.is_empty() {
+                            None
+                        } else {
+                            Some(signout_errors.join("\n"))
+                        };
                         token_cache = None;
                         notification_tracker.reset();
                         let _ = proxy.send_event(AppEvent::StateChanged);
