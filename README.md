@@ -12,15 +12,21 @@ OAuth token in macOS Keychain, and polls GitHub for PRs that need attention.
 
 This project follows the same product direction as [Neat](https://neat.run/):
 a menu bar first workflow for PR notifications, with local state and minimal
-noise. The current implementation focuses on Phase 1-4 MVP scope:
+noise. The current implementation includes:
 
 - GitHub OAuth Device Flow sign-in, no PAT required.
 - Org/private repository support through OAuth scopes.
-- Menu bar ToDo/Done list for review requests, unread PR notifications, and your open PRs.
+- A WebView panel opened from the `PR` menu bar item or `pullbell://show`.
+- To do and Done views for review requests, unread PR notifications, and your
+  open PRs.
+- Keyboard navigation, PR preview, filtering, copy URL, local Done, and Undo.
+- GitHub notification thread actions where available, including mark done and
+  mute.
+- Settings for sign-in/out, update checks, update install, and app actions.
 - Desktop notifications for newly seen actionable PR items.
 - Token storage in macOS Keychain.
-- Unit tests for PR merging and ordering.
-- macOS CI for formatting, linting, and tests.
+- GitHub Release update checks, verified app archive installation, and restart.
+- Unit tests plus macOS CI for formatting, linting, tests, and releases.
 
 ## Technical choices
 
@@ -29,10 +35,11 @@ noise. The current implementation focuses on Phase 1-4 MVP scope:
 - `reqwest` + `tokio` for GitHub OAuth and REST API calls.
 - `keyring` for macOS Keychain storage.
 - `mac-notification-sys` for native desktop notifications.
+- `wry` for the lightweight in-app WebView panel.
 
-Tauri was intentionally not used for the MVP because the first usable version
-does not need a full WebView UI. A richer PR preview window can be added later
-without changing the GitHub/OAuth core modules.
+Tauri is intentionally not used. Pullbell keeps a small native tray process and
+a focused WebView panel while keeping the GitHub, OAuth, state, and update
+modules independent of the UI shell.
 
 ## Install
 
@@ -209,13 +216,14 @@ Completed MVP:
 
 - Phase 1: Reference Neat's public behavior: menu bar, focused notifications,
   PR-oriented workflow, local-first state.
-- Phase 2: Select Rust with a small native tray stack instead of a full WebView.
-- Phase 3: Split app into OAuth, GitHub API, state, storage, and menu modules.
-- Phase 4: Implement the app, tests, CI, and README.
+- Phase 2: Select Rust with a small native tray stack and focused WebView panel.
+- Phase 3: Split app into OAuth, GitHub API, state, storage, panel, and update
+  modules.
+- Phase 4: Implement To do/Done workflows, preview, shortcuts, Settings,
+  notification thread actions, tests, CI, and release automation.
 
 Next phases:
 
-- Add an in-app preview window for PR/comment bodies.
 - Add user-configurable polling interval and repo/org filters.
-- Add support for marking notification threads as done/read.
-- Package as a signed and notarized `.app` bundle.
+- Persist more panel preferences across restarts.
+- Package as a notarized `.app` bundle.

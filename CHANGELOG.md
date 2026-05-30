@@ -7,6 +7,9 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
+- Updated the README to match the current WebView panel, local Done/Undo,
+  Settings, update, and release behavior.
+
 ## 0.9.1
 
 - Released the local Done and Undo shortcut behavior through the app update
