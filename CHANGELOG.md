@@ -7,6 +7,11 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
+## 0.9.1
+
+- Released the local Done and Undo shortcut behavior through the app update
+  channel.
+
 ## 0.9.0
 
 - Changed the `d` shortcut to mark pull requests done locally in Pullbell,
