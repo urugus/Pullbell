@@ -160,6 +160,7 @@ impl GitHubClient {
                     author: item.user.map(|user| user.login),
                     reason: Some(search_reason(&kind).to_string()),
                     preview: item.body.and_then(clean_preview),
+                    locally_done: false,
                 }
             }));
 
@@ -262,6 +263,7 @@ impl GitHubClient {
                 author: details.author,
                 reason: notification.reason,
                 preview: details.preview,
+                locally_done: false,
             });
         }
 

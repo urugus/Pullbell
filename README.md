@@ -150,6 +150,9 @@ Leave the Raycast hotkey unset if you do not want a keyboard shortcut.
 - `Enter` / `o`: open the selected pull request.
 - `c`: copy the selected pull request URL.
 - `Space`: toggle the selected pull request preview.
+- `d`: mark the selected pull request done in Pullbell.
+- `u`: move the selected done pull request back to To do.
+- `m`: mute the selected GitHub notification thread.
 
 ## Test
 

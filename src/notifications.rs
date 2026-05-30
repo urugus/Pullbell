@@ -38,6 +38,12 @@ impl NotificationTracker {
         self.known_actionable.clear();
         self.bootstrapped = false;
     }
+
+    pub(super) fn mark_non_actionable(&mut self, id: &str) {
+        if self.bootstrapped {
+            self.known_actionable.insert(id.to_string(), false);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -58,6 +64,7 @@ mod tests {
             author: None,
             reason: None,
             preview: None,
+            locally_done: false,
         }
     }
 
@@ -109,6 +116,31 @@ mod tests {
         let notifications = tracker.new_notifications(&[item("1", PrKind::ReviewRequested)]);
 
         assert!(notifications.is_empty());
+    }
+
+    #[test]
+    fn does_not_report_locally_done_items_as_actionable() {
+        let mut tracker = NotificationTracker::default();
+        tracker.new_notifications(&[item("1", PrKind::Authored)]);
+
+        let notifications = tracker.new_notifications(&[PullRequestItem {
+            locally_done: true,
+            ..item("1", PrKind::ReviewRequested)
+        }]);
+
+        assert!(notifications.is_empty());
+    }
+
+    #[test]
+    fn reports_item_that_updates_after_being_marked_non_actionable() {
+        let mut tracker = NotificationTracker::default();
+        tracker.new_notifications(&[item("1", PrKind::ReviewRequested)]);
+        tracker.mark_non_actionable("1");
+
+        let notifications = tracker.new_notifications(&[item("1", PrKind::ReviewRequested)]);
+
+        let ids: Vec<_> = notifications.into_iter().map(|item| item.id).collect();
+        assert_eq!(ids, vec!["1"]);
     }
 
     #[test]

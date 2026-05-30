@@ -1,4 +1,4 @@
-use crate::model::{AvailableUpdate, PullRequestItem};
+use crate::model::{AvailableUpdate, LocalDonePrs, PullRequestItem};
 use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Default)]
@@ -15,6 +15,7 @@ pub struct AppState {
     pub available_update: Option<AvailableUpdate>,
     pub pending_auth: Option<PendingAuth>,
     pub pull_requests: Vec<PullRequestItem>,
+    pub local_done_prs: LocalDonePrs,
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +73,7 @@ mod tests {
             author: None,
             reason: None,
             preview: None,
+            locally_done: false,
         }
     }
 
@@ -90,5 +92,23 @@ mod tests {
         assert_eq!(state.todo_count(), 2);
         assert_eq!(state.done_count(), 1);
         assert_eq!(state.tray_title(), "PR 2");
+    }
+
+    #[test]
+    fn local_done_review_requests_count_as_done() {
+        let state = AppState {
+            pull_requests: vec![
+                PullRequestItem {
+                    locally_done: true,
+                    ..item("1", PrKind::ReviewRequested)
+                },
+                item("2", PrKind::Notification),
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(state.todo_done_counts(), (1, 1));
+        assert_eq!(state.todo_count(), 1);
+        assert_eq!(state.done_count(), 1);
     }
 }
