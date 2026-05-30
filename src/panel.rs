@@ -283,10 +283,10 @@ button {{
   width: 100%;
   min-height: 62px;
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  gap: 6px;
   align-items: center;
-  padding: 9px 10px;
+  padding: 0 6px 0 0;
   border: 0;
   border-radius: 10px;
   color: inherit;
@@ -294,18 +294,67 @@ button {{
   text-align: left;
   cursor: default;
 }}
-.row:hover {{
+.row:hover,
+.row:focus-within {{
   background: #2c3036;
 }}
 .row:focus {{
   outline: none;
 }}
-.row:active {{
-  background: #343940;
-}}
 .row.selected {{
   background: #313640;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.10);
+}}
+.row-main {{
+  min-width: 0;
+  min-height: 62px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 0 9px 10px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}}
+.row-main:focus {{
+  outline: none;
+}}
+.row-main:active {{
+  color: inherit;
+}}
+.row-copy {{
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  color: #d6d9df;
+  background: transparent;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}}
+.row.selected .row-copy,
+.row:focus-within .row-copy {{
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}}
+.row-copy:hover {{
+  color: #ffffff;
+  background: #3a404a;
+}}
+.row-copy:focus {{
+  outline: 1px solid rgba(255,255,255,.22);
+  outline-offset: 0;
+}}
+.row-copy svg {{
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
 }}
 .badge {{
   width: 28px;
@@ -660,6 +709,11 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
     if (row && row.dataset.cmd) window.send(row.dataset.cmd);
   }};
 
+  window.PullbellCopySelected = function() {{
+    const row = selectableRows().filter(function(row) {{ return !row.hidden; }})[selectedIndex];
+    if (row && row.dataset.copyCmd) window.send(row.dataset.copyCmd);
+  }};
+
   window.PullbellActOnSelected = function(action) {{
     const row = selectableRows().filter(function(row) {{ return !row.hidden; }})[selectedIndex];
     if (!row) return;
@@ -788,7 +842,7 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
       window.send("hide");
       return;
     }}
-    if (event.target && event.target.tagName === "BUTTON" && event.target.dataset.selectable !== "true") return;
+    if (event.target && event.target.tagName === "BUTTON" && event.target.dataset.rowShortcut !== "true") return;
     if (currentView !== "notifications") return;
 
     if (key === "j" || event.key === "ArrowDown") {{
@@ -800,6 +854,9 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
     }} else if (key === "enter" || key === "o") {{
       event.preventDefault();
       window.PullbellActivateSelected();
+    }} else if (key === "c") {{
+      event.preventDefault();
+      window.PullbellCopySelected();
     }} else if (event.key === " ") {{
       event.preventDefault();
       window.PullbellTogglePreview();
@@ -1096,10 +1153,12 @@ fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("No preview text available.");
+    let copy_command = format!("copy-url:{}", item.url);
 
     format!(
-        r#"<button class="row" data-selectable="true" data-cmd="{}" data-repo="{}" data-reason="{}" data-author="{}" data-preview-title="{}" data-preview-meta="{}" data-preview-body="{}"{}{} tabindex="-1" aria-selected="false" onfocus="window.PullbellSelectElement(this)" onclick="send(this.dataset.cmd)"><div class="badge {}">{}</div><div class="main"><div class="meta"><span class="repo">{}</span><span class="dot"></span><span>#{}</span><span class="dot"></span><span>{}</span></div><div class="title">{}</div></div><div class="age">{}</div></button>"#,
+        r#"<div class="row" data-selectable="true" data-cmd="{}" data-copy-cmd="{}" data-repo="{}" data-reason="{}" data-author="{}" data-preview-title="{}" data-preview-meta="{}" data-preview-body="{}"{}{} tabindex="-1" aria-selected="false" onfocusin="window.PullbellSelectElement(this)"><button class="row-main" type="button" tabindex="-1" data-row-shortcut="true" data-cmd="{}" onclick="send(this.dataset.cmd)"><div class="badge {}">{}</div><div class="main"><div class="meta"><span class="repo">{}</span><span class="dot"></span><span>#{}</span><span class="dot"></span><span>{}</span></div><div class="title">{}</div></div><div class="age">{}</div></button><button class="row-copy" type="button" title="Copy PR URL" aria-label="Copy PR URL" data-cmd="{}" onclick="event.stopPropagation(); send(this.dataset.cmd)">{}</button></div>"#,
         escape_attr(&command),
+        escape_attr(&copy_command),
         escape_attr(&item.repo),
         escape_attr(&reason),
         escape_attr(author),
@@ -1108,13 +1167,16 @@ fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
         escape_attr(preview_body),
         done_attr,
         mute_attr,
+        escape_attr(&command),
         badge_class,
         badge_text,
         escape_html(repo),
         item.number,
         escape_html(label),
         escape_html(&item.title),
-        escape_html(&age)
+        escape_html(&age),
+        escape_attr(&copy_command),
+        copy_icon()
     )
 }
 
@@ -1235,6 +1297,10 @@ fn back_icon() -> &'static str {
     r#"<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>"#
 }
 
+fn copy_icon() -> &'static str {
+    r#"<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>"#
+}
+
 fn short_repo_name(repo: &str) -> &str {
     repo.rsplit('/').next().unwrap_or(repo)
 }
@@ -1321,6 +1387,8 @@ mod tests {
         assert!(body.contains("Unread notification"));
         assert!(body.contains("Authored"));
         assert!(body.contains("data-cmd=\"open:https://github.com/owner/repo/pull/42\""));
+        assert!(body.contains("data-copy-cmd=\"copy-url:https://github.com/owner/repo/pull/42\""));
+        assert!(body.contains("aria-label=\"Copy PR URL\""));
     }
 
     #[test]
@@ -1336,6 +1404,7 @@ mod tests {
         assert!(markup.contains("data-selectable=\"true\""));
         assert!(markup.contains("window.PullbellSelect"));
         assert!(markup.contains("window.PullbellActivateSelected"));
+        assert!(markup.contains("window.PullbellCopySelected"));
         assert!(markup.contains("window.PullbellActOnSelected"));
         assert!(markup.contains("window.PullbellTogglePreview"));
         assert!(markup.contains("window.PullbellShowSettings"));
@@ -1352,14 +1421,16 @@ mod tests {
                 || markup.contains(r#"currentView === "settings""#)
         );
         assert!(
-            markup.contains("event.target.dataset.selectable !== &quot;true&quot;")
-                || markup.contains("event.target.dataset.selectable !== \"true\"")
+            markup.contains("event.target.dataset.rowShortcut !== &quot;true&quot;")
+                || markup.contains("event.target.dataset.rowShortcut !== \"true\"")
         );
         assert!(markup.contains("^(SELECT|INPUT|TEXTAREA)$"));
         assert!(
             markup.contains("event.key === &quot; &quot;")
                 || markup.contains(r#"event.key === " ""#)
         );
+        assert!(markup.contains("key === &quot;c&quot;") || markup.contains(r#"key === "c""#));
+        assert!(markup.contains("window.PullbellCopySelected()"));
         assert!(markup.contains("window.PullbellActOnSelected(\"done\")"));
         assert!(markup.contains("window.PullbellActOnSelected(\"mute\")"));
         assert!(markup.contains("window.send(\"refresh\")"));
@@ -1443,6 +1514,41 @@ mod tests {
         ));
         assert!(body.contains("id=\"preview\""));
         assert!(body.contains("aria-label=\"Close preview\""));
+    }
+
+    #[test]
+    fn renders_copy_control_for_selected_rows() {
+        let markup = html(&AppState {
+            token_loaded: true,
+            pull_requests: vec![item(PrKind::ReviewRequested)],
+            ..Default::default()
+        });
+
+        assert!(markup.contains(".row-copy"));
+        assert!(markup.contains(".row.selected .row-copy"));
+        assert!(markup.contains(".row:focus-within .row-copy"));
+        assert!(markup.contains("pointer-events: none"));
+        assert!(markup.contains("pointer-events: auto"));
+        assert!(markup.contains("visibility: hidden"));
+        assert!(markup.contains("visibility: visible"));
+    }
+
+    #[test]
+    fn copy_control_keeps_native_button_keyboard_behavior() {
+        let row = render_item(
+            &item(PrKind::ReviewRequested),
+            Utc.timestamp_opt(7_200, 0).unwrap(),
+        );
+        let copy_button = row
+            .split("<button class=\"row-copy\"")
+            .nth(1)
+            .expect("copy button markup");
+
+        assert!(row.contains(
+            "class=\"row-main\" type=\"button\" tabindex=\"-1\" data-row-shortcut=\"true\""
+        ));
+        assert!(!copy_button.contains("data-row-shortcut=\"true\""));
+        assert!(!copy_button.contains("tabindex=\"-1\""));
     }
 
     #[test]

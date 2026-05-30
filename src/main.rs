@@ -40,6 +40,7 @@ enum AppEvent {
 enum AppCommand {
     SignIn,
     CopySignInCode,
+    CopyUrl(String),
     Refresh,
     CheckForUpdates,
     InstallUpdate,
@@ -118,6 +119,9 @@ fn main() -> Result<()> {
                             AppCommand::OpenUrl(url) => {
                                 let _ = open::that(url);
                             }
+                            AppCommand::CopyUrl(url) => {
+                                copy_url_to_clipboard(&state, &proxy, url);
+                            }
                             AppCommand::CopySignInCode => {
                                 let code = state
                                     .lock()
@@ -185,6 +189,9 @@ fn main() -> Result<()> {
                         AppCommand::OpenUrl(url) => {
                             let _ = open::that(url);
                         }
+                        AppCommand::CopyUrl(url) => {
+                            copy_url_to_clipboard(&state, &proxy, url);
+                        }
                         AppCommand::CopySignInCode => {
                             let code = state
                                 .lock()
@@ -251,6 +258,29 @@ mod tests {
             &url::Url::parse("pullbell://show?mode=toggle").unwrap()
         ));
     }
+
+    #[test]
+    fn accepts_copy_url_for_github_urls_only() {
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        match panel_command(
+            &state,
+            "copy-url:https://github.com/owner/repo/pull/42".to_string(),
+        ) {
+            Some(AppCommand::CopyUrl(url)) => {
+                assert_eq!(url, "https://github.com/owner/repo/pull/42");
+            }
+            command => panic!("unexpected command: {command:?}"),
+        }
+
+        assert!(
+            panel_command(
+                &state,
+                "copy-url:https://example.com/owner/repo/pull/42".to_string(),
+            )
+            .is_none()
+        );
+    }
 }
 
 fn panel_command(state: &Arc<Mutex<AppState>>, command: String) -> Option<AppCommand> {
@@ -274,21 +304,34 @@ fn panel_command(state: &Arc<Mutex<AppState>>, command: String) -> Option<AppCom
                 return Some(AppCommand::MuteNotification(thread_id.to_string()));
             }
 
+            if let Some(url) = command
+                .strip_prefix("copy-url:")
+                .filter(|url| is_github_url(url))
+            {
+                return Some(AppCommand::CopyUrl(url.to_string()));
+            }
+
             command
                 .strip_prefix("open:")
-                .filter(|url| {
-                    url.starts_with("https://github.com/")
-                        || state
-                            .lock()
-                            .expect("state lock")
-                            .pending_auth
-                            .as_ref()
-                            .is_some_and(|auth| auth.verification_uri == *url)
-                        || pullbell::updater::RELEASES_URL == *url
-                })
+                .filter(|url| is_allowed_open_url(state, url))
                 .map(|url| AppCommand::OpenUrl(url.to_string()))
         }
     }
+}
+
+fn is_allowed_open_url(state: &Arc<Mutex<AppState>>, url: &str) -> bool {
+    is_github_url(url)
+        || state
+            .lock()
+            .expect("state lock")
+            .pending_auth
+            .as_ref()
+            .is_some_and(|auth| auth.verification_uri == url)
+        || pullbell::updater::RELEASES_URL == url
+}
+
+fn is_github_url(url: &str) -> bool {
+    url.starts_with("https://github.com/")
 }
 
 fn is_thread_id(value: &str) -> bool {
@@ -425,6 +468,7 @@ async fn run_worker(
                     }
                     AppCommand::OpenUrl(_) => {}
                     AppCommand::CopySignInCode => {}
+                    AppCommand::CopyUrl(_) => {}
                     AppCommand::Quit => {}
                 }
             }
@@ -734,6 +778,36 @@ fn clear_error(state: &Arc<Mutex<AppState>>) {
     let mut guard = state.lock().expect("state lock");
     guard.last_error = None;
     guard.last_status = None;
+}
+
+fn copy_url_to_clipboard(
+    state: &Arc<Mutex<AppState>>,
+    proxy: &EventLoopProxy<AppEvent>,
+    url: String,
+) {
+    let result = if let Ok(mut clipboard) = arboard::Clipboard::new() {
+        clipboard
+            .set_text(url)
+            .map(|_| "Copied PR URL".to_string())
+            .map_err(|error| format!("Failed to copy PR URL: {error}"))
+    } else {
+        Err("Failed to access clipboard".to_string())
+    };
+
+    {
+        let mut guard = state.lock().expect("state lock");
+        match result {
+            Ok(message) => {
+                guard.last_error = None;
+                guard.last_status = Some(message);
+            }
+            Err(error) => {
+                guard.last_error = Some(error);
+                guard.last_status = None;
+            }
+        }
+    }
+    let _ = proxy.send_event(AppEvent::StateChanged);
 }
 
 fn set_error(state: &Arc<Mutex<AppState>>, error: String) {
