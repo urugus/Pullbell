@@ -7,6 +7,9 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
+- Added a selected-row copy control and `c` keyboard shortcut for copying the
+  selected pull request URL.
+
 ## 0.7.1
 
 - Fixed PR notifications so already tracked authored pull requests can notify

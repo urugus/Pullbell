@@ -143,6 +143,13 @@ panel. To assign a keyboard shortcut through Raycast:
 
 Leave the Raycast hotkey unset if you do not want a keyboard shortcut.
 
+## Panel Shortcuts
+
+- `j` / `k` or arrow keys: move the selected pull request.
+- `Enter` / `o`: open the selected pull request.
+- `c`: copy the selected pull request URL.
+- `Space`: toggle the selected pull request preview.
+
 ## Test
 
 ```sh
