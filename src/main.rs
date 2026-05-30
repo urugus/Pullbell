@@ -682,7 +682,7 @@ async fn mark_pr_done(
     token: Option<&str>,
     pr_id: &str,
 ) {
-    let Some(mut done_item) = state
+    let Some(done_item) = state
         .lock()
         .expect("state lock")
         .pull_requests
@@ -694,7 +694,6 @@ async fn mark_pr_done(
         let _ = proxy.send_event(AppEvent::StateChanged);
         return;
     };
-    done_item.locally_done = true;
     let updated_at = done_item.updated_at;
     let thread_id = done_item.notification_thread_id.clone();
 
@@ -703,7 +702,7 @@ async fn mark_pr_done(
         pr_id.to_string(),
         LocalDonePr {
             updated_at,
-            item: Some(done_item),
+            item: Some(done_item.local_done_snapshot()),
         },
     );
 
@@ -721,6 +720,7 @@ async fn mark_pr_done(
         if let Some(item) = guard.pull_requests.iter_mut().find(|item| item.id == pr_id) {
             item.locally_done = true;
         }
+        notification_tracker.mark_non_actionable(pr_id);
     }
     let _ = proxy.send_event(AppEvent::StateChanged);
 

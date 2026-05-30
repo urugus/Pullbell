@@ -12,7 +12,6 @@ format and must match the version in `Cargo.toml`.
 - Changed the `d` shortcut to mark pull requests done locally in Pullbell,
   while still marking GitHub notification threads done when available.
 - Added `u` to move a locally done pull request back to To do.
-
 - Removed the native tray context menu and centralized app actions in the
   panel Settings view.
 

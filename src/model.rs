@@ -55,6 +55,13 @@ impl PullRequestItem {
     pub fn is_todo(&self) -> bool {
         self.kind.is_todo() && !self.locally_done
     }
+
+    pub fn local_done_snapshot(&self) -> Self {
+        let mut snapshot = self.clone();
+        snapshot.locally_done = true;
+        snapshot.preview = None;
+        snapshot
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,7 +84,7 @@ pub fn apply_local_done_prs(items: &mut Vec<PullRequestItem>, local_done_prs: &m
 
         if local_done_still_applies(done.updated_at, item.updated_at) {
             item.locally_done = true;
-            done.item = Some(item.clone());
+            done.item = Some(item.local_done_snapshot());
         } else {
             item.locally_done = false;
             stale_ids.push(item.id.clone());
@@ -93,8 +100,8 @@ pub fn apply_local_done_prs(items: &mut Vec<PullRequestItem>, local_done_prs: &m
             continue;
         }
 
-        if let Some(mut item) = done.item.clone() {
-            item.locally_done = true;
+        if let Some(item) = done.item.clone() {
+            let item = item.local_done_snapshot();
             items.push(item);
         }
     }
@@ -326,9 +333,22 @@ mod tests {
     }
 
     #[test]
+    fn local_done_snapshot_drops_preview_text() {
+        let snapshot = PullRequestItem {
+            preview: Some("private preview".to_string()),
+            ..item("1", PrKind::ReviewRequested, 20)
+        }
+        .local_done_snapshot();
+
+        assert!(snapshot.locally_done);
+        assert_eq!(snapshot.preview, None);
+    }
+
+    #[test]
     fn local_done_prs_append_missing_snapshot_items() {
         let snapshot = PullRequestItem {
             locally_done: true,
+            preview: Some("private preview".to_string()),
             ..item("1", PrKind::Notification, 20)
         };
         let mut items = vec![item("2", PrKind::Authored, 30)];
@@ -345,6 +365,7 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert_eq!(items[1].id, "1");
         assert!(items[1].locally_done);
+        assert_eq!(items[1].preview, None);
         assert!(!items[1].is_todo());
     }
 
