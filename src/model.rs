@@ -1,7 +1,8 @@
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PrKind {
     ReviewRequested,
     Authored,
@@ -30,7 +31,7 @@ impl PrKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PullRequestItem {
     pub id: String,
     pub repo: String,
@@ -43,6 +44,7 @@ pub struct PullRequestItem {
     pub author: Option<String>,
     pub reason: Option<String>,
     pub preview: Option<String>,
+    pub locally_done: bool,
 }
 
 impl PullRequestItem {
@@ -51,7 +53,60 @@ impl PullRequestItem {
     }
 
     pub fn is_todo(&self) -> bool {
-        self.kind.is_todo()
+        self.kind.is_todo() && !self.locally_done
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalDonePr {
+    pub updated_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub item: Option<PullRequestItem>,
+}
+
+pub type LocalDonePrs = BTreeMap<String, LocalDonePr>;
+
+pub fn apply_local_done_prs(items: &mut Vec<PullRequestItem>, local_done_prs: &mut LocalDonePrs) {
+    let mut stale_ids = Vec::new();
+
+    for item in items.iter_mut() {
+        let Some(done) = local_done_prs.get_mut(&item.id) else {
+            item.locally_done = false;
+            continue;
+        };
+
+        if local_done_still_applies(done.updated_at, item.updated_at) {
+            item.locally_done = true;
+            done.item = Some(item.clone());
+        } else {
+            item.locally_done = false;
+            stale_ids.push(item.id.clone());
+        }
+    }
+
+    for id in stale_ids {
+        local_done_prs.remove(&id);
+    }
+
+    for (id, done) in local_done_prs.iter() {
+        if items.iter().any(|item| &item.id == id) {
+            continue;
+        }
+
+        if let Some(mut item) = done.item.clone() {
+            item.locally_done = true;
+            items.push(item);
+        }
+    }
+}
+
+fn local_done_still_applies(
+    done_updated_at: Option<DateTime<Utc>>,
+    current_updated_at: Option<DateTime<Utc>>,
+) -> bool {
+    match (done_updated_at, current_updated_at) {
+        (Some(done_updated_at), Some(current_updated_at)) => done_updated_at >= current_updated_at,
+        _ => true,
     }
 }
 
@@ -124,6 +179,7 @@ mod tests {
             author: None,
             reason: None,
             preview: None,
+            locally_done: false,
         }
     }
 
@@ -211,6 +267,85 @@ mod tests {
         assert_eq!(merged[0].author.as_deref(), Some("octo"));
         assert_eq!(merged[0].reason.as_deref(), Some("comment"));
         assert_eq!(merged[0].preview.as_deref(), Some("Looks good"));
+    }
+
+    #[test]
+    fn local_done_prs_keep_matching_items_done() {
+        let mut items = vec![item("1", PrKind::ReviewRequested, 20)];
+        let mut done = LocalDonePrs::from([(
+            "1".to_string(),
+            LocalDonePr {
+                updated_at: Some(Utc.timestamp_opt(20, 0).unwrap()),
+                item: None,
+            },
+        )]);
+
+        apply_local_done_prs(&mut items, &mut done);
+
+        assert!(!items[0].is_todo());
+        assert!(items[0].locally_done);
+        assert!(done.contains_key("1"));
+    }
+
+    #[test]
+    fn local_done_prs_expire_when_items_are_newer() {
+        let mut items = vec![item("1", PrKind::ReviewRequested, 30)];
+        let mut done = LocalDonePrs::from([(
+            "1".to_string(),
+            LocalDonePr {
+                updated_at: Some(Utc.timestamp_opt(20, 0).unwrap()),
+                item: None,
+            },
+        )]);
+
+        apply_local_done_prs(&mut items, &mut done);
+
+        assert!(items[0].is_todo());
+        assert!(!items[0].locally_done);
+        assert!(!done.contains_key("1"));
+    }
+
+    #[test]
+    fn local_done_prs_without_timestamps_keep_items_done() {
+        let mut items = vec![PullRequestItem {
+            updated_at: None,
+            ..item("1", PrKind::ReviewRequested, 20)
+        }];
+        let mut done = LocalDonePrs::from([(
+            "1".to_string(),
+            LocalDonePr {
+                updated_at: None,
+                item: None,
+            },
+        )]);
+
+        apply_local_done_prs(&mut items, &mut done);
+
+        assert!(!items[0].is_todo());
+        assert!(items[0].locally_done);
+    }
+
+    #[test]
+    fn local_done_prs_append_missing_snapshot_items() {
+        let snapshot = PullRequestItem {
+            locally_done: true,
+            ..item("1", PrKind::Notification, 20)
+        };
+        let mut items = vec![item("2", PrKind::Authored, 30)];
+        let mut done = LocalDonePrs::from([(
+            "1".to_string(),
+            LocalDonePr {
+                updated_at: Some(Utc.timestamp_opt(20, 0).unwrap()),
+                item: Some(snapshot),
+            },
+        )]);
+
+        apply_local_done_prs(&mut items, &mut done);
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[1].id, "1");
+        assert!(items[1].locally_done);
+        assert!(!items[1].is_todo());
     }
 
     #[test]

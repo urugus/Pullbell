@@ -3,7 +3,7 @@ use chrono::Utc;
 use mac_notification_sys::send_notification;
 use pullbell::auth::OAuthDeviceClient;
 use pullbell::github::GitHubClient;
-use pullbell::model::PullRequestItem;
+use pullbell::model::{LocalDonePr, PullRequestItem, apply_local_done_prs};
 use pullbell::state::{AppState, PendingAuth};
 use pullbell::storage;
 use pullbell::updater;
@@ -47,7 +47,8 @@ enum AppCommand {
         token: Option<String>,
     },
     SignOut,
-    MarkNotificationDone(String),
+    MarkPrDone(String),
+    UndoPrDone(String),
     MuteNotification(String),
     OpenUrl(String),
     Quit,
@@ -57,7 +58,11 @@ fn main() -> Result<()> {
     let runtime = Runtime::new().context("starting async runtime")?;
     let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
-    let state = Arc::new(Mutex::new(AppState::default()));
+    let local_done_prs = storage::load_done_prs()?;
+    let state = Arc::new(Mutex::new(AppState {
+        local_done_prs,
+        ..Default::default()
+    }));
     let (command_tx, command_rx) = mpsc::unbounded_channel();
 
     let client_id = load_client_id();
@@ -129,14 +134,16 @@ fn main() -> Result<()> {
                     return;
                 }
 
-                if let Some(action) = command.strip_prefix("missing-thread:") {
-                    set_error(
-                        &state,
-                        format!(
-                            "{} is available for GitHub notification threads only.",
-                            notification_action_label(action)
-                        ),
-                    );
+                if let Some(action) = command.strip_prefix("missing-action:") {
+                    if action == "mute" {
+                        set_error(
+                            &state,
+                            format!(
+                                "{} is available for GitHub notification threads only.",
+                                notification_action_label(action)
+                            ),
+                        );
+                    }
                     let _ = proxy.send_event(AppEvent::StateChanged);
                     return;
                 }
@@ -238,6 +245,32 @@ mod tests {
             .is_none()
         );
     }
+
+    #[test]
+    fn accepts_local_done_pr_commands() {
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        match panel_command(&state, "done-pr:owner/repo#42".to_string()) {
+            Some(AppCommand::MarkPrDone(pr_id)) => {
+                assert_eq!(pr_id, "owner/repo#42");
+            }
+            command => panic!("unexpected command: {command:?}"),
+        }
+
+        assert!(panel_command(&state, "done:42".to_string()).is_none());
+    }
+
+    #[test]
+    fn accepts_local_done_undo_commands() {
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        match panel_command(&state, "undo-pr:owner/repo#42".to_string()) {
+            Some(AppCommand::UndoPrDone(pr_id)) => {
+                assert_eq!(pr_id, "owner/repo#42");
+            }
+            command => panic!("unexpected command: {command:?}"),
+        }
+    }
 }
 
 fn panel_command(state: &Arc<Mutex<AppState>>, command: String) -> Option<AppCommand> {
@@ -253,8 +286,12 @@ fn panel_command(state: &Arc<Mutex<AppState>>, command: String) -> Option<AppCom
         )),
         "quit" => Some(AppCommand::Quit),
         _ => {
-            if let Some(thread_id) = command.strip_prefix("done:").filter(|id| is_thread_id(id)) {
-                return Some(AppCommand::MarkNotificationDone(thread_id.to_string()));
+            if let Some(pr_id) = command.strip_prefix("done-pr:").filter(|id| !id.is_empty()) {
+                return Some(AppCommand::MarkPrDone(pr_id.to_string()));
+            }
+
+            if let Some(pr_id) = command.strip_prefix("undo-pr:").filter(|id| !id.is_empty()) {
+                return Some(AppCommand::UndoPrDone(pr_id.to_string()));
             }
 
             if let Some(thread_id) = command.strip_prefix("mute:").filter(|id| is_thread_id(id)) {
@@ -392,25 +429,32 @@ async fn run_worker(
                     AppCommand::SignOut => {
                         active_sign_in_attempt = None;
                         sign_in_generation.fetch_add(1, Ordering::SeqCst);
+                        let mut signout_error = None;
                         if let Err(error) = storage::delete_token() {
-                            set_error(&state, format!("{error:#}"));
+                            signout_error = Some(format!("{error:#}"));
+                        }
+                        if let Err(error) = storage::delete_done_prs() {
+                            signout_error = Some(format!("{error:#}"));
                         }
                         let mut guard = state.lock().expect("state lock");
                         *guard = AppState::default();
+                        guard.last_error = signout_error;
                         token_cache = None;
                         notification_tracker.reset();
                         let _ = proxy.send_event(AppEvent::StateChanged);
                     }
-                    AppCommand::MarkNotificationDone(thread_id) => {
-                        act_on_notification_thread(
+                    AppCommand::MarkPrDone(pr_id) => {
+                        mark_pr_done(
                             &state,
                             &proxy,
                             &mut notification_tracker,
                             token_cache.as_deref(),
-                            &thread_id,
-                            NotificationThreadAction::Done,
+                            &pr_id,
                         )
                         .await;
+                    }
+                    AppCommand::UndoPrDone(pr_id) => {
+                        undo_pr_done(&state, &proxy, &pr_id);
                     }
                     AppCommand::MuteNotification(thread_id) => {
                         act_on_notification_thread(
@@ -435,14 +479,12 @@ async fn run_worker(
 
 #[derive(Debug, Clone, Copy)]
 enum NotificationThreadAction {
-    Done,
     Mute,
 }
 
 impl NotificationThreadAction {
     fn label(self) -> &'static str {
         match self {
-            Self::Done => "Done",
             Self::Mute => "Mute",
         }
     }
@@ -587,7 +629,17 @@ async fn refresh(
     let client = GitHubClient::new(token);
     match client.viewer().await {
         Ok(viewer) => match client.pull_requests_for(&viewer.login).await {
-            Ok(items) => {
+            Ok(mut items) => {
+                let mut done_prs_to_save = None;
+                {
+                    let mut guard = state.lock().expect("state lock");
+                    let previous_done_prs = guard.local_done_prs.clone();
+                    apply_local_done_prs(&mut items, &mut guard.local_done_prs);
+                    if guard.local_done_prs != previous_done_prs {
+                        done_prs_to_save = Some(guard.local_done_prs.clone());
+                    }
+                }
+
                 for item in notification_tracker.new_notifications(&items) {
                     let _ = proxy.send_event(AppEvent::Notify(item));
                 }
@@ -599,12 +651,123 @@ async fn refresh(
                 guard.last_refreshed_at = Some(Utc::now());
                 guard.last_error = None;
                 guard.pull_requests = items;
+                drop(guard);
+
+                if let Some(done_prs) = done_prs_to_save {
+                    if let Err(error) = storage::save_done_prs(&done_prs) {
+                        set_error(state, format!("{error:#}"));
+                    }
+                }
             }
             Err(error) => set_error(state, format!("{error:#}")),
         },
         Err(error) => set_error(state, format!("{error:#}")),
     }
 
+    let _ = proxy.send_event(AppEvent::StateChanged);
+}
+
+async fn mark_pr_done(
+    state: &Arc<Mutex<AppState>>,
+    proxy: &EventLoopProxy<AppEvent>,
+    notification_tracker: &mut NotificationTracker,
+    token: Option<&str>,
+    pr_id: &str,
+) {
+    let Some(mut done_item) = state
+        .lock()
+        .expect("state lock")
+        .pull_requests
+        .iter()
+        .find(|item| item.id == pr_id)
+        .cloned()
+    else {
+        set_error(state, "Pull request is no longer available.".to_string());
+        let _ = proxy.send_event(AppEvent::StateChanged);
+        return;
+    };
+    done_item.locally_done = true;
+    let updated_at = done_item.updated_at;
+    let thread_id = done_item.notification_thread_id.clone();
+
+    let mut done_prs = state.lock().expect("state lock").local_done_prs.clone();
+    done_prs.insert(
+        pr_id.to_string(),
+        LocalDonePr {
+            updated_at,
+            item: Some(done_item),
+        },
+    );
+
+    if let Err(error) = storage::save_done_prs(&done_prs) {
+        set_error(state, format!("{error:#}"));
+        let _ = proxy.send_event(AppEvent::StateChanged);
+        return;
+    }
+
+    {
+        let mut guard = state.lock().expect("state lock");
+        guard.local_done_prs = done_prs;
+        guard.last_error = None;
+        guard.last_status = Some("Marked PR done".to_string());
+        if let Some(item) = guard.pull_requests.iter_mut().find(|item| item.id == pr_id) {
+            item.locally_done = true;
+        }
+    }
+    let _ = proxy.send_event(AppEvent::StateChanged);
+
+    let Some(thread_id) = thread_id else {
+        return;
+    };
+
+    let Some(token) = token else {
+        set_error(
+            state,
+            "Marked PR done locally, but GitHub sign-in is required to update the notification."
+                .to_string(),
+        );
+        let _ = proxy.send_event(AppEvent::StateChanged);
+        return;
+    };
+
+    let client = GitHubClient::new(token);
+    match client.mark_notification_thread_done(&thread_id).await {
+        Ok(()) => {
+            refresh(state, proxy, notification_tracker, Some(token)).await;
+            let mut guard = state.lock().expect("state lock");
+            guard.last_status = Some("Marked PR done".to_string());
+            let _ = proxy.send_event(AppEvent::StateChanged);
+        }
+        Err(error) => {
+            set_error(state, format!("{error:#}"));
+            let _ = proxy.send_event(AppEvent::StateChanged);
+        }
+    }
+}
+
+fn undo_pr_done(state: &Arc<Mutex<AppState>>, proxy: &EventLoopProxy<AppEvent>, pr_id: &str) {
+    let mut done_prs = state.lock().expect("state lock").local_done_prs.clone();
+    if done_prs.remove(pr_id).is_none() {
+        set_error(state, "Pull request is not marked done.".to_string());
+        let _ = proxy.send_event(AppEvent::StateChanged);
+        return;
+    }
+
+    if let Err(error) = storage::save_done_prs(&done_prs) {
+        set_error(state, format!("{error:#}"));
+        let _ = proxy.send_event(AppEvent::StateChanged);
+        return;
+    }
+
+    {
+        let mut guard = state.lock().expect("state lock");
+        guard.local_done_prs = done_prs;
+        guard.last_error = None;
+        guard.last_status = Some("Moved PR back to To do".to_string());
+        if let Some(item) = guard.pull_requests.iter_mut().find(|item| item.id == pr_id) {
+            item.locally_done = false;
+        }
+    }
     let _ = proxy.send_event(AppEvent::StateChanged);
 }
 
@@ -634,7 +797,6 @@ async fn act_on_notification_thread(
 
     let client = GitHubClient::new(token);
     let result = match action {
-        NotificationThreadAction::Done => client.mark_notification_thread_done(thread_id).await,
         NotificationThreadAction::Mute => client.mute_notification_thread(thread_id).await,
     };
 

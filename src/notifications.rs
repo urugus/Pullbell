@@ -58,6 +58,7 @@ mod tests {
             author: None,
             reason: None,
             preview: None,
+            locally_done: false,
         }
     }
 
@@ -107,6 +108,19 @@ mod tests {
         tracker.new_notifications(&[item("1", PrKind::Notification)]);
 
         let notifications = tracker.new_notifications(&[item("1", PrKind::ReviewRequested)]);
+
+        assert!(notifications.is_empty());
+    }
+
+    #[test]
+    fn does_not_report_locally_done_items_as_actionable() {
+        let mut tracker = NotificationTracker::default();
+        tracker.new_notifications(&[item("1", PrKind::Authored)]);
+
+        let notifications = tracker.new_notifications(&[PullRequestItem {
+            locally_done: true,
+            ..item("1", PrKind::ReviewRequested)
+        }]);
 
         assert!(notifications.is_empty());
     }

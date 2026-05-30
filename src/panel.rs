@@ -737,8 +737,11 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
     const row = selectableRows().filter(function(row) {{ return !row.hidden; }})[selectedIndex];
     if (!row) return;
 
-    const command = action === "done" ? row.dataset.doneCmd : row.dataset.muteCmd;
-    window.send(command || "missing-thread:" + action);
+    const command =
+      action === "done" ? row.dataset.doneCmd :
+      action === "undo" ? row.dataset.undoCmd :
+      row.dataset.muteCmd;
+    window.send(command || "missing-action:" + action);
   }};
 
   window.PullbellShowPreview = function() {{
@@ -882,6 +885,9 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
     }} else if (key === "d") {{
       event.preventDefault();
       window.PullbellActOnSelected("done");
+    }} else if (key === "u") {{
+      event.preventDefault();
+      window.PullbellActOnSelected("undo");
     }} else if (key === "m") {{
       event.preventDefault();
       window.PullbellActOnSelected("mute");
@@ -921,19 +927,13 @@ fn render_body(snapshot: &AppState) -> String {
     html.push_str(&render_section(
         "To do",
         todo_count,
-        snapshot
-            .pull_requests
-            .iter()
-            .filter(|item| item.kind.is_todo()),
+        snapshot.pull_requests.iter().filter(|item| item.is_todo()),
         "All caught up",
     ));
     html.push_str(&render_section(
         "Done",
         done_count,
-        snapshot
-            .pull_requests
-            .iter()
-            .filter(|item| item.kind == PrKind::Authored),
+        snapshot.pull_requests.iter().filter(|item| !item.is_todo()),
         "No open PRs being tracked",
     ));
     html.push_str("</main>");
@@ -1259,7 +1259,12 @@ fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
         .map(|updated_at| relative_age(updated_at, now))
         .unwrap_or_else(|| "unknown".to_string());
     let command = format!("open:{}", item.url);
-    let done_attr = notification_action_attr("data-done-cmd", "done", item);
+    let done_attr = format!(r#" data-done-cmd="done-pr:{}""#, escape_attr(&item.id));
+    let undo_attr = if item.locally_done {
+        format!(r#" data-undo-cmd="undo-pr:{}""#, escape_attr(&item.id))
+    } else {
+        String::new()
+    };
     let mute_attr = notification_action_attr("data-mute-cmd", "mute", item);
     let reason = reason_label(item);
     let author = item.author.as_deref().unwrap_or("");
@@ -1272,7 +1277,7 @@ fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
     let copy_command = format!("copy-url:{}", item.url);
 
     format!(
-        r#"<div class="row" data-selectable="true" data-cmd="{}" data-copy-cmd="{}" data-repo="{}" data-reason="{}" data-author="{}" data-preview-title="{}" data-preview-meta="{}" data-preview-body="{}"{}{} tabindex="-1" aria-selected="false" onfocusin="window.PullbellSelectElement(this)"><button class="row-open" type="button" tabindex="-1" data-row-shortcut="true" data-cmd="{}" onclick="send(this.dataset.cmd)"><div class="badge {}">{}</div><div class="row-main"><div class="meta"><span class="repo">{}</span><span class="dot"></span><span>#{}</span><span class="dot"></span><span>{}</span></div><div class="title">{}</div></div></button><button class="row-copy" type="button" title="Copy PR URL" aria-label="Copy PR URL" data-cmd="{}" onclick="event.stopPropagation(); send(this.dataset.cmd)">{}</button><div class="age">{}</div></div>"#,
+        r#"<div class="row" data-selectable="true" data-cmd="{}" data-copy-cmd="{}" data-repo="{}" data-reason="{}" data-author="{}" data-preview-title="{}" data-preview-meta="{}" data-preview-body="{}"{}{}{} tabindex="-1" aria-selected="false" onfocusin="window.PullbellSelectElement(this)"><button class="row-open" type="button" tabindex="-1" data-row-shortcut="true" data-cmd="{}" onclick="send(this.dataset.cmd)"><div class="badge {}">{}</div><div class="row-main"><div class="meta"><span class="repo">{}</span><span class="dot"></span><span>#{}</span><span class="dot"></span><span>{}</span></div><div class="title">{}</div></div></button><button class="row-copy" type="button" title="Copy PR URL" aria-label="Copy PR URL" data-cmd="{}" onclick="event.stopPropagation(); send(this.dataset.cmd)">{}</button><div class="age">{}</div></div>"#,
         escape_attr(&command),
         escape_attr(&copy_command),
         escape_attr(&item.repo),
@@ -1282,6 +1287,7 @@ fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
         escape_attr(&preview_meta),
         escape_attr(preview_body),
         done_attr,
+        undo_attr,
         mute_attr,
         escape_attr(&command),
         badge_class,
@@ -1439,6 +1445,7 @@ mod tests {
             author: Some("octo".to_string()),
             reason: Some("review_requested".to_string()),
             preview: Some("Review the updated notification layout before merging.".to_string()),
+            locally_done: false,
         }
     }
 
@@ -1516,6 +1523,7 @@ mod tests {
         assert!(markup.contains("key === &quot;c&quot;") || markup.contains(r#"key === "c""#));
         assert!(markup.contains("window.PullbellCopySelected()"));
         assert!(markup.contains("window.PullbellActOnSelected(\"done\")"));
+        assert!(markup.contains("window.PullbellActOnSelected(\"undo\")"));
         assert!(markup.contains("window.PullbellActOnSelected(\"mute\")"));
         assert!(markup.contains("window.send(\"refresh\")"));
         assert!(markup.contains("window.send(\"inbox\")"));
@@ -1658,9 +1666,50 @@ mod tests {
     fn renders_notification_thread_actions_when_available() {
         let row = render_item(&notification_item(), Utc.timestamp_opt(7_200, 0).unwrap());
 
-        assert!(row.contains("data-done-cmd=\"done:thread-42\""));
+        assert!(row.contains("data-done-cmd=\"done-pr:owner/repo#42\""));
+        assert!(!row.contains("data-undo-cmd"));
         assert!(row.contains("data-mute-cmd=\"mute:thread-42\""));
         assert!(!row.contains("thread-42\"\""));
+    }
+
+    #[test]
+    fn renders_done_action_without_notification_thread() {
+        let row = render_item(
+            &item(PrKind::ReviewRequested),
+            Utc.timestamp_opt(7_200, 0).unwrap(),
+        );
+
+        assert!(row.contains("data-done-cmd=\"done-pr:owner/repo#42\""));
+        assert!(!row.contains("data-mute-cmd"));
+    }
+
+    #[test]
+    fn renders_local_done_review_requests_in_done_section() {
+        let body = render_body(&AppState {
+            token_loaded: true,
+            pull_requests: vec![PullRequestItem {
+                locally_done: true,
+                ..item(PrKind::ReviewRequested)
+            }],
+            ..Default::default()
+        });
+
+        assert!(body.contains(">To do</span><span>0</span>"));
+        assert!(body.contains(">Done</span><span>1</span>"));
+        assert!(body.contains("Review requested"));
+    }
+
+    #[test]
+    fn renders_undo_action_for_local_done_items() {
+        let row = render_item(
+            &PullRequestItem {
+                locally_done: true,
+                ..item(PrKind::ReviewRequested)
+            },
+            Utc.timestamp_opt(7_200, 0).unwrap(),
+        );
+
+        assert!(row.contains("data-undo-cmd=\"undo-pr:owner/repo#42\""));
     }
 
     #[test]
