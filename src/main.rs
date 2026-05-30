@@ -7,7 +7,6 @@ use pullbell::model::PullRequestItem;
 use pullbell::state::{AppState, PendingAuth};
 use pullbell::storage;
 use pullbell::updater;
-use std::collections::HashMap;
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -16,7 +15,6 @@ use tao::event::{Event, StartCause, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
-use tray_icon::menu::{MenuEvent, MenuId};
 use tray_icon::{MouseButton, MouseButtonState, Rect, TrayIconEvent};
 
 mod menu;
@@ -63,7 +61,6 @@ fn main() -> Result<()> {
     let (command_tx, command_rx) = mpsc::unbounded_channel();
 
     let client_id = load_client_id();
-    let menu_commands = Arc::new(Mutex::new(HashMap::<MenuId, AppCommand>::new()));
     let mut tray = menu::build_tray()?;
     let initial_snapshot = state.lock().expect("state lock").clone();
     let mut panel = panel::Panel::new(&event_loop, proxy.clone(), &initial_snapshot)?;
@@ -84,9 +81,8 @@ fn main() -> Result<()> {
         initial_token,
     ));
 
-    menu::rebuild(&mut tray, &state, &menu_commands)?;
+    menu::update_tray(&mut tray, &state)?;
 
-    let menu_events = MenuEvent::receiver();
     let tray_events = TrayIconEvent::receiver();
     event_loop.run(move |event, _, control_flow| {
         *control_flow =
@@ -106,49 +102,10 @@ fn main() -> Result<()> {
                         panel.toggle_near(rect);
                     }
                 }
-
-                while let Ok(menu_event) = menu_events.try_recv() {
-                    let command = menu_commands
-                        .lock()
-                        .expect("menu command lock")
-                        .get(&menu_event.id)
-                        .cloned();
-
-                    if let Some(command) = command {
-                        match command {
-                            AppCommand::OpenUrl(url) => {
-                                let _ = open::that(url);
-                            }
-                            AppCommand::CopyUrl(url) => {
-                                copy_url_to_clipboard(&state, &proxy, url);
-                            }
-                            AppCommand::CopySignInCode => {
-                                let code = state
-                                    .lock()
-                                    .expect("state lock")
-                                    .pending_auth
-                                    .as_ref()
-                                    .map(|auth| auth.user_code.clone());
-
-                                if let (Some(code), Ok(mut clipboard)) =
-                                    (code, arboard::Clipboard::new())
-                                {
-                                    let _ = clipboard.set_text(code);
-                                }
-                            }
-                            AppCommand::Quit => {
-                                *control_flow = ControlFlow::Exit;
-                            }
-                            other => {
-                                let _ = command_tx.send(other);
-                            }
-                        }
-                    }
-                }
             }
             Event::UserEvent(AppEvent::StateChanged) => {
-                if let Err(error) = menu::rebuild(&mut tray, &state, &menu_commands) {
-                    eprintln!("failed to rebuild menu: {error:#}");
+                if let Err(error) = menu::update_tray(&mut tray, &state) {
+                    eprintln!("failed to update tray: {error:#}");
                 }
                 let snapshot = state.lock().expect("state lock").clone();
                 if let Err(error) = panel.update(&snapshot) {

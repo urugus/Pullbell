@@ -580,6 +580,23 @@ button {{
 .settings-filters .filter {{
   width: 100%;
 }}
+.settings-actions {{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding-top: 10px;
+}}
+.settings-actions .tool {{
+  border: 1px solid rgba(255,255,255,.08);
+  background: #2b3038;
+}}
+.settings-actions .tool:hover {{
+  background: #343a44;
+}}
+.settings-actions .tool:disabled {{
+  color: #747b86;
+  background: #252930;
+}}
 .chips {{
   display: flex;
   flex-wrap: wrap;
@@ -969,12 +986,109 @@ fn render_filter_controls(snapshot: &AppState) -> String {
 }
 
 fn render_settings(snapshot: &AppState) -> String {
-    format!(
-        r#"<main id="settings-view" class="content view settings" data-panel-view="settings"><div class="settings-head"><button class="tool icon" title="Back to notifications" aria-label="Back to notifications" onclick="window.PullbellShowNotifications()">{}</button><div><div class="settings-title">Controls</div><div class="settings-subtitle">Tune which pull request notifications stay in focus.</div></div></div><div class="settings-body"><section class="settings-section"><div class="settings-label">View</div><div class="setting-row"><div><div class="setting-name">Group by Repository</div><div class="setting-note">Preview control only. The notification list keeps the current order.</div></div><button class="switch" type="button" data-group-by-repository aria-label="Group by Repository" aria-pressed="false" onclick="window.PullbellToggleGroupByRepository()"></button></div></section><section class="settings-section"><div class="settings-label">Focus filters</div><div class="setting-note">These controls mirror the notification list filters.</div><div class="settings-filters">{}</div></section><section class="settings-section"><div class="settings-label">Muted</div><div class="setting-note">Available repositories, reasons, and users you can filter out for this session.</div>{}</section></div></main>"#,
-        back_icon(),
-        render_filter_controls(snapshot),
+    let mut html = format!(
+        r#"<main id="settings-view" class="content view settings" data-panel-view="settings"><div class="settings-head"><button class="tool icon" title="Back to notifications" aria-label="Back to notifications" onclick="window.PullbellShowNotifications()">{}</button><div><div class="settings-title">Settings</div><div class="settings-subtitle">Manage Pullbell controls and app actions.</div></div></div><div class="settings-body">"#,
+        back_icon()
+    );
+
+    html.push_str(&render_account_settings(snapshot));
+    html.push_str(&render_update_settings(snapshot));
+    html.push_str(
+        r#"<section class="settings-section"><div class="settings-label">View</div><div class="setting-row"><div><div class="setting-name">Group by Repository</div><div class="setting-note">Preview control only. The notification list keeps the current order.</div></div><button class="switch" type="button" data-group-by-repository aria-label="Group by Repository" aria-pressed="false" onclick="window.PullbellToggleGroupByRepository()"></button></div></section>"#,
+    );
+    html.push_str(&format!(
+        r#"<section class="settings-section"><div class="settings-label">Focus filters</div><div class="setting-note">These controls mirror the notification list filters.</div><div class="settings-filters">{}</div></section>"#,
+        render_filter_controls(snapshot)
+    ));
+    html.push_str(&format!(
+        r#"<section class="settings-section"><div class="settings-label">Muted</div><div class="setting-note">Available repositories, reasons, and users you can filter out for this session.</div>{}</section>"#,
         render_muted_chips(snapshot)
-    )
+    ));
+    html.push_str(&render_app_settings());
+    html.push_str("</div></main>");
+    html
+}
+
+fn render_account_settings(snapshot: &AppState) -> String {
+    let account_note = if let Some(login) = &snapshot.signed_in_as {
+        format!("Signed in as {}", escape_html(login))
+    } else if snapshot.token_loaded {
+        "Signed in".to_string()
+    } else if snapshot.pending_auth.is_some() {
+        "GitHub sign-in is waiting for device approval.".to_string()
+    } else {
+        "Not signed in".to_string()
+    };
+
+    let mut html = format!(
+        r#"<section class="settings-section"><div class="settings-label">Account</div><div class="setting-row"><div><div class="setting-name">GitHub</div><div class="setting-note">{}</div></div></div><div class="settings-actions">"#,
+        account_note
+    );
+
+    if !snapshot.token_loaded && snapshot.pending_auth.is_none() {
+        html.push_str(
+            r#"<button class="tool primary" onclick="send('signin')">Sign in with GitHub</button>"#,
+        );
+    }
+
+    if let Some(auth) = &snapshot.pending_auth {
+        html.push_str(&format!(
+            r#"<button class="tool primary" data-cmd="open:{}" onclick="send(this.dataset.cmd)">Open GitHub</button><button class="tool" onclick="send('copy-signin-code')">Copy code</button>"#,
+            escape_attr(&auth.verification_uri)
+        ));
+    }
+
+    if snapshot.token_loaded {
+        html.push_str(r#"<button class="tool" onclick="send('signout')">Sign out</button>"#);
+    }
+
+    html.push_str("</div></section>");
+    html
+}
+
+fn render_update_settings(snapshot: &AppState) -> String {
+    let note = if let Some(update) = &snapshot.available_update {
+        format!("Update available: v{}", escape_html(&update.latest_version))
+    } else if snapshot.is_checking_updates {
+        "Checking the latest release.".to_string()
+    } else if let Some(checked_at) = snapshot.last_update_checked_at {
+        format!("Last checked at {}", checked_at.format("%H:%M:%S"))
+    } else {
+        "Check GitHub Releases for a newer version.".to_string()
+    };
+
+    let mut html = format!(
+        r#"<section class="settings-section"><div class="settings-label">Updates</div><div class="setting-row"><div><div class="setting-name">Pullbell version {}</div><div class="setting-note">{}</div></div></div><div class="settings-actions">"#,
+        env!("CARGO_PKG_VERSION"),
+        note
+    );
+
+    if let Some(update) = &snapshot.available_update {
+        if update.download_url.is_some() {
+            html.push_str(r#"<button class="tool primary" onclick="send('install-update')">Install update</button>"#);
+        }
+        html.push_str(&format!(
+            r#"<button class="tool" data-cmd="open:{}" onclick="send(this.dataset.cmd)">Open release</button>"#,
+            escape_attr(&update.release_url)
+        ));
+    } else {
+        if snapshot.is_checking_updates {
+            html.push_str(r#"<button class="tool" disabled>Checking...</button>"#);
+        } else {
+            html.push_str(r#"<button class="tool" onclick="send('check-updates')">Check for updates</button>"#);
+        }
+        html.push_str(&format!(
+            r#"<button class="tool" data-cmd="open:{}" onclick="send(this.dataset.cmd)">Open releases</button>"#,
+            escape_attr(updater::RELEASES_URL)
+        ));
+    }
+
+    html.push_str("</div></section>");
+    html
+}
+
+fn render_app_settings() -> String {
+    r#"<section class="settings-section"><div class="settings-label">App</div><div class="setting-row"><div><div class="setting-name">Pullbell</div><div class="setting-note">Close the menu bar app.</div></div></div><div class="settings-actions"><button class="tool" onclick="send('quit')">Quit Pullbell</button></div></section>"#.to_string()
 }
 
 fn render_muted_chips(snapshot: &AppState) -> String {
@@ -1246,44 +1360,12 @@ fn render_footer(snapshot: &AppState) -> String {
         refresh_label
     );
 
-    if !snapshot.token_loaded && snapshot.pending_auth.is_none() {
-        html.push_str(r#"<button class="tool" onclick="send('signin')">Sign in</button>"#);
-    }
-
-    if let Some(auth) = &snapshot.pending_auth {
-        html.push_str(&format!(
-            r#"<button class="tool" data-cmd="open:{}" onclick="send(this.dataset.cmd)">GitHub</button><button class="tool" onclick="send('copy-signin-code')">Copy</button>"#,
-            escape_attr(&auth.verification_uri)
-        ));
-    }
-
-    if let Some(update) = &snapshot.available_update {
-        if update.download_url.is_some() {
-            html.push_str(
-                r#"<button class="tool" onclick="send('install-update')">Update</button>"#,
-            );
-        }
-        html.push_str(&format!(
-            r#"<button class="tool" data-cmd="open:{}" onclick="send(this.dataset.cmd)">Release</button>"#,
-            escape_attr(&update.release_url)
-        ));
-    } else {
-        html.push_str(r#"<button class="tool" onclick="send('check-updates')">Updates</button>"#);
-        html.push_str(&format!(
-            r#"<button class="tool" data-cmd="open:{}" onclick="send(this.dataset.cmd)">Release</button>"#,
-            escape_attr(updater::RELEASES_URL)
-        ));
-    }
-
     html.push_str(r#"<div class="spacer"></div>"#);
-    if snapshot.token_loaded {
-        html.push_str(r#"<button class="tool" onclick="send('signout')">Sign out</button>"#);
-    }
     html.push_str(&format!(
         r#"<button class="tool icon" data-open-settings type="button" title="Settings" aria-label="Open settings" aria-controls="settings-view" aria-expanded="false" onclick="window.PullbellShowSettings()">{}</button>"#,
         settings_icon()
     ));
-    html.push_str(r#"<button class="tool" onclick="send('quit')">Quit</button></footer>"#);
+    html.push_str("</footer>");
     html
 }
 
@@ -1462,11 +1544,18 @@ mod tests {
         assert!(body.contains("id=\"settings-view\""));
         assert!(body.contains("data-panel-view=\"settings\""));
         assert!(body.contains("aria-label=\"Back to notifications\""));
-        assert!(body.contains(">Controls<"));
+        assert!(body.contains(">Settings<"));
+        assert!(body.contains(">Account<"));
+        assert!(body.contains(">Updates<"));
         assert!(body.contains(">Group by Repository<"));
         assert!(body.contains("data-group-by-repository"));
         assert!(body.contains("onclick=\"window.PullbellToggleGroupByRepository()\""));
         assert!(body.contains(">Muted<"));
+        assert!(body.contains(">App<"));
+        assert!(body.contains("Quit Pullbell"));
+        assert!(body.contains("Check for updates"));
+        assert!(body.contains("Open releases"));
+        assert!(body.contains("Sign out"));
         assert!(body.matches("data-filter=\"repo\"").count() >= 2);
         assert!(body.matches("data-filter=\"reason\"").count() >= 2);
         assert!(body.matches("data-filter=\"author\"").count() >= 2);
