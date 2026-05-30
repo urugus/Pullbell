@@ -59,11 +59,11 @@ You can also download the latest `pullbell-*-apple-darwin.zip` archive from
 move `Pullbell.app` to `/Applications`.
 
 Pullbell runs as a menu bar app. Open Pullbell, click the `PR` menu bar item,
-then choose `Sign in with GitHub`.
+open Settings, then choose `Sign in with GitHub`.
 
 Pullbell checks GitHub Releases for newer versions and shows an update notice in
-the menu when a release is available. Release app bundles can verify and install
-the matching update archive from the app, then restart Pullbell without opening
+the panel when a release is available. Release app bundles can verify and install
+the matching update archive from Settings, then restart Pullbell without opening
 Terminal.
 
 Release builds are ad-hoc signed so the app bundle has a valid local code
@@ -128,8 +128,9 @@ GitHub documents the OAuth Device Flow, OAuth scopes, and notifications API in:
 cargo run
 ```
 
-Click the `PR` menu bar item, then choose `Sign in with GitHub`. The app opens
-GitHub's device login page and copies the user code to the clipboard.
+Click the `PR` menu bar item, open Settings, then choose `Sign in with GitHub`.
+The app opens GitHub's device login page and copies the user code to the
+clipboard.
 
 ## Raycast Shortcut
 

@@ -7,6 +7,9 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
+- Removed the native tray context menu and centralized app actions in the
+  panel Settings view.
+
 ## 0.8.0
 
 - Added a selected-row copy control and `c` keyboard shortcut for copying the
