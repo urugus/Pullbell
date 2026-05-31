@@ -74,14 +74,6 @@ impl Panel {
         self.visible
     }
 
-    pub(super) fn toggle_near(&mut self, rect: Rect) {
-        if self.visible {
-            self.hide();
-        } else {
-            self.show_near(rect);
-        }
-    }
-
     pub(super) fn show_near_or_default(&mut self, rect: Option<Rect>) {
         if let Some(rect) = rect {
             self.show_near(rect);
@@ -103,15 +95,13 @@ impl Panel {
             .context("updating Pullbell panel")
     }
 
-    fn show_near(&mut self, rect: Rect) {
+    pub(super) fn show_near(&mut self, rect: Rect) {
         let x = (rect.position.x + f64::from(rect.size.width) - PANEL_WIDTH + 16.0).max(8.0);
         let y = rect.position.y + f64::from(rect.size.height) + 8.0;
 
         self.window
             .set_outer_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
-        self.window.set_visible(true);
-        self.window.set_focus();
-        self.visible = true;
+        self.show();
     }
 
     fn show_near_screen_edge(&mut self) {
@@ -134,11 +124,31 @@ impl Panel {
             x.max(8.0).round() as i32,
             y.max(8.0).round() as i32,
         ));
+        self.show();
+    }
+
+    fn show(&mut self) {
+        activate_application();
         self.window.set_visible(true);
         self.window.set_focus();
         self.visible = true;
     }
 }
+
+#[cfg(target_os = "macos")]
+fn activate_application() {
+    use objc2_app_kit::NSApplication;
+    use objc2_foundation::MainThreadMarker;
+
+    // SAFETY: panel visibility is managed from tao's main event-loop thread.
+    let mtm = unsafe { MainThreadMarker::new_unchecked() };
+    let app = NSApplication::sharedApplication(mtm);
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn activate_application() {}
 
 fn html(snapshot: &AppState) -> String {
     format!(

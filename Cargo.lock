@@ -2083,6 +2083,8 @@ dependencies = [
  "dirs",
  "keyring",
  "mac-notification-sys",
+ "objc2-app-kit",
+ "objc2-foundation",
  "open",
  "pretty_assertions",
  "reqwest",
