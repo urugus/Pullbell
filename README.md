@@ -25,7 +25,7 @@ noise. The current implementation includes:
 - Settings for sign-in/out, update checks, update install, and app actions.
 - Desktop notifications for newly seen actionable PR items.
 - Token storage in macOS Keychain.
-- GitHub Release update checks, verified app archive installation, and restart.
+- GitHub Release update checks, Homebrew Cask installation, and restart.
 - Unit tests plus macOS CI for formatting, linting, tests, and releases.
 
 ## Technical choices

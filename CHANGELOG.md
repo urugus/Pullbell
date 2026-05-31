@@ -7,6 +7,8 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
+## 0.9.3
+
 - Changed in-app update installation to delegate to the Homebrew Cask, matching
   the NextRoom update flow, with background update logs under Application
   Support.
