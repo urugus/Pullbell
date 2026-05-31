@@ -11,6 +11,7 @@ format and must match the version in `Cargo.toml`.
 
 - Fixed menu bar panel focus handling so the panel remains visible during
   initial presentation while still auto-hiding after normal focus loss.
+- Open the related pull request when clicking a Pullbell desktop notification.
 
 ## 0.9.3
 
