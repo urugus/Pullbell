@@ -365,16 +365,25 @@ button {{
 .badge {{
   width: 28px;
   height: 28px;
-  border-radius: 8px;
   display: grid;
   place-items: center;
-  font-size: 12px;
-  font-weight: 800;
-  color: #f7f8fb;
+  color: #9ca1ac;
 }}
-.badge.review {{ background: #8268ff; }}
-.badge.notify {{ background: #26a0dc; }}
-.badge.authored {{ background: #4f5966; }}
+.badge svg {{
+  width: 20px;
+  height: 20px;
+  stroke: currentColor;
+}}
+.badge.review {{ color: #9b87ff; }}
+.badge.notify {{ color: #3fb6f2; }}
+.badge.authored {{ color: #8c949f; }}
+.badge.ci {{ color: #ff6b6b; }}
+.badge.mention {{ color: #49c6f5; }}
+.badge.security {{ color: #ffb84d; }}
+.badge.state {{ color: #75d08a; }}
+.badge.assign {{ color: #f2c94c; }}
+.badge.muted {{ color: #707681; }}
+.row.done .badge {{ color: #676d77; }}
 .main {{
   min-width: 0;
 }}
@@ -1252,11 +1261,10 @@ fn render_section<'a>(
 }
 
 fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
-    let (badge_class, badge_text, label) = match item.kind {
-        PrKind::ReviewRequested => ("review", "R", "Review requested"),
-        PrKind::Notification => ("notify", "N", "Unread notification"),
-        PrKind::Authored => ("authored", "A", "Authored"),
-    };
+    let label = item_kind_label(item);
+    let badge_class = item_icon_class(item);
+    let badge_icon = item_icon(item);
+    let row_class = if item.locally_done { "row done" } else { "row" };
     let repo = short_repo_name(&item.repo);
     let age = item
         .updated_at
@@ -1281,7 +1289,8 @@ fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
     let copy_command = format!("copy-url:{}", item.url);
 
     format!(
-        r#"<div class="row" data-selectable="true" data-cmd="{}" data-copy-cmd="{}" data-repo="{}" data-reason="{}" data-author="{}" data-preview-title="{}" data-preview-meta="{}" data-preview-body="{}"{}{}{} tabindex="-1" aria-selected="false" onfocusin="window.PullbellSelectElement(this)"><button class="row-open" type="button" tabindex="-1" data-row-shortcut="true" data-cmd="{}" onclick="send(this.dataset.cmd)"><div class="badge {}">{}</div><div class="row-main"><div class="meta"><span class="repo">{}</span><span class="dot"></span><span>#{}</span><span class="dot"></span><span>{}</span></div><div class="title">{}</div></div></button><button class="row-copy" type="button" title="Copy PR URL" aria-label="Copy PR URL" data-cmd="{}" onclick="event.stopPropagation(); send(this.dataset.cmd)">{}</button><div class="age">{}</div></div>"#,
+        r#"<div class="{}" data-selectable="true" data-cmd="{}" data-copy-cmd="{}" data-repo="{}" data-reason="{}" data-author="{}" data-preview-title="{}" data-preview-meta="{}" data-preview-body="{}"{}{}{} tabindex="-1" aria-selected="false" onfocusin="window.PullbellSelectElement(this)"><button class="row-open" type="button" tabindex="-1" data-row-shortcut="true" data-cmd="{}" onclick="send(this.dataset.cmd)"><div class="badge {}" title="{}" aria-label="{}">{}</div><div class="row-main"><div class="meta"><span class="repo">{}</span><span class="dot"></span><span>#{}</span><span class="dot"></span><span>{}</span></div><div class="title">{}</div></div></button><button class="row-copy" type="button" title="Copy PR URL" aria-label="Copy PR URL" data-cmd="{}" onclick="event.stopPropagation(); send(this.dataset.cmd)">{}</button><div class="age">{}</div></div>"#,
+        row_class,
         escape_attr(&command),
         escape_attr(&copy_command),
         escape_attr(&item.repo),
@@ -1295,7 +1304,9 @@ fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
         mute_attr,
         escape_attr(&command),
         badge_class,
-        badge_text,
+        escape_attr(label),
+        escape_attr(label),
+        badge_icon,
         escape_html(repo),
         item.number,
         escape_html(label),
@@ -1304,6 +1315,52 @@ fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
         copy_icon(),
         escape_html(&age)
     )
+}
+
+fn item_kind_label(item: &PullRequestItem) -> &'static str {
+    match item.kind {
+        PrKind::ReviewRequested => "Review requested",
+        PrKind::Notification => "Unread notification",
+        PrKind::Authored => "Authored",
+    }
+}
+
+fn item_icon_class(item: &PullRequestItem) -> &'static str {
+    match item.reason.as_deref() {
+        Some("ci_activity") => "ci",
+        Some("mention" | "team_mention") => "mention",
+        Some("security_alert") => "security",
+        Some("state_change") => "state",
+        Some("assign" | "assigned") => "assign",
+        Some("subscribed" | "manual" | "invitation") => "muted",
+        Some("review_requested") => "review",
+        Some("author") => "authored",
+        Some("comment") => "notify",
+        _ => match item.kind {
+            PrKind::ReviewRequested => "review",
+            PrKind::Notification => "notify",
+            PrKind::Authored => "authored",
+        },
+    }
+}
+
+fn item_icon(item: &PullRequestItem) -> &'static str {
+    match item.reason.as_deref() {
+        Some("ci_activity") => ci_icon(),
+        Some("mention" | "team_mention") => mention_icon(),
+        Some("security_alert") => security_icon(),
+        Some("state_change") => state_change_icon(),
+        Some("assign" | "assigned") => assigned_icon(),
+        Some("subscribed" | "manual" | "invitation") => bell_icon(),
+        Some("review_requested") => pull_request_icon(),
+        Some("author") => authored_icon(),
+        Some("comment") => comment_icon(),
+        _ => match item.kind {
+            PrKind::ReviewRequested => pull_request_icon(),
+            PrKind::Notification => comment_icon(),
+            PrKind::Authored => authored_icon(),
+        },
+    }
 }
 
 fn preview_meta(item: &PullRequestItem, age: &str, reason: &str) -> String {
@@ -1393,6 +1450,42 @@ fn back_icon() -> &'static str {
 
 fn copy_icon() -> &'static str {
     r#"<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>"#
+}
+
+fn pull_request_icon() -> &'static str {
+    r#"<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M6 9v6"></path><path d="M15 6h3a3 3 0 0 1 3 3v1"></path><path d="m18 13 3-3-3-3"></path></svg>"#
+}
+
+fn authored_icon() -> &'static str {
+    r#"<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M6 9v6"></path><path d="M12 6h3a3 3 0 0 1 3 3v9"></path><path d="m15 15 3 3 3-3"></path></svg>"#
+}
+
+fn comment_icon() -> &'static str {
+    r#"<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"></path></svg>"#
+}
+
+fn mention_icon() -> &'static str {
+    r#"<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"></path></svg>"#
+}
+
+fn ci_icon() -> &'static str {
+    r#"<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.8 9.8 0 0 0-6.7 2.7L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.8 9.8 0 0 0 6.7-2.7L21 16"></path><path d="M16 16h5v5"></path></svg>"#
+}
+
+fn security_icon() -> &'static str {
+    r#"<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.7 8.8a1 1 0 0 1-.6 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1.2 1.2 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1Z"></path><path d="M12 8v4"></path><path d="M12 16h.01"></path></svg>"#
+}
+
+fn state_change_icon() -> &'static str {
+    r#"<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 18h1a4 4 0 0 0 4-4V6"></path><path d="M6 6h7"></path><path d="M3 18h5"></path><path d="m16 9-3-3 3-3"></path><path d="M17 18h4"></path></svg>"#
+}
+
+fn assigned_icon() -> &'static str {
+    r#"<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="m16 11 2 2 4-4"></path></svg>"#
+}
+
+fn bell_icon() -> &'static str {
+    r#"<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 21a2 2 0 0 0 3.4 0"></path><path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path></svg>"#
 }
 
 fn short_repo_name(repo: &str) -> &str {
@@ -1664,6 +1757,33 @@ mod tests {
         let age_index = row.find("class=\"age\"").expect("age");
 
         assert!(copy_index < age_index);
+    }
+
+    #[test]
+    fn renders_icon_badges_instead_of_letter_badges() {
+        let row = render_item(
+            &item(PrKind::ReviewRequested),
+            Utc.timestamp_opt(7_200, 0).unwrap(),
+        );
+
+        assert!(row.contains("class=\"badge review\""));
+        assert!(row.contains("aria-label=\"Review requested\""));
+        assert!(row.contains("<svg viewBox=\"0 0 24 24\""));
+        assert!(!row.contains(">R</div>"));
+    }
+
+    #[test]
+    fn renders_notification_reason_specific_icons() {
+        let row = render_item(
+            &PullRequestItem {
+                reason: Some("ci_activity".to_string()),
+                ..notification_item()
+            },
+            Utc.timestamp_opt(7_200, 0).unwrap(),
+        );
+
+        assert!(row.contains("class=\"badge ci\""));
+        assert!(row.contains("aria-label=\"Unread notification\""));
     }
 
     #[test]
