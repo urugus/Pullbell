@@ -1326,39 +1326,37 @@ fn item_kind_label(item: &PullRequestItem) -> &'static str {
 }
 
 fn item_icon_class(item: &PullRequestItem) -> &'static str {
-    match item.reason.as_deref() {
-        Some("ci_activity") => "ci",
-        Some("mention" | "team_mention") => "mention",
-        Some("security_alert") => "security",
-        Some("state_change") => "state",
-        Some("assign" | "assigned") => "assign",
-        Some("subscribed" | "manual" | "invitation") => "muted",
-        Some("review_requested") => "review",
-        Some("author") => "authored",
-        Some("comment") => "notify",
-        _ => match item.kind {
-            PrKind::ReviewRequested => "review",
-            PrKind::Notification => "notify",
-            PrKind::Authored => "authored",
+    match item.kind {
+        PrKind::ReviewRequested => "review",
+        PrKind::Authored => "authored",
+        PrKind::Notification => match item.reason.as_deref() {
+            Some("ci_activity") => "ci",
+            Some("mention" | "team_mention") => "mention",
+            Some("security_alert") => "security",
+            Some("state_change") => "state",
+            Some("assign" | "assigned") => "assign",
+            Some("subscribed" | "manual" | "invitation") => "muted",
+            Some("review_requested") => "review",
+            Some("comment") => "notify",
+            _ => "notify",
         },
     }
 }
 
 fn item_icon(item: &PullRequestItem) -> &'static str {
-    match item.reason.as_deref() {
-        Some("ci_activity") => ci_icon(),
-        Some("mention" | "team_mention") => mention_icon(),
-        Some("security_alert") => security_icon(),
-        Some("state_change") => state_change_icon(),
-        Some("assign" | "assigned") => assigned_icon(),
-        Some("subscribed" | "manual" | "invitation") => bell_icon(),
-        Some("review_requested") => pull_request_icon(),
-        Some("author") => authored_icon(),
-        Some("comment") => comment_icon(),
-        _ => match item.kind {
-            PrKind::ReviewRequested => pull_request_icon(),
-            PrKind::Notification => comment_icon(),
-            PrKind::Authored => authored_icon(),
+    match item.kind {
+        PrKind::ReviewRequested => pull_request_icon(),
+        PrKind::Authored => authored_icon(),
+        PrKind::Notification => match item.reason.as_deref() {
+            Some("ci_activity") => ci_icon(),
+            Some("mention" | "team_mention") => mention_icon(),
+            Some("security_alert") => security_icon(),
+            Some("state_change") => state_change_icon(),
+            Some("assign" | "assigned") => assigned_icon(),
+            Some("subscribed" | "manual" | "invitation") => bell_icon(),
+            Some("review_requested") => pull_request_icon(),
+            Some("comment") => comment_icon(),
+            _ => comment_icon(),
         },
     }
 }
@@ -1784,6 +1782,20 @@ mod tests {
 
         assert!(row.contains("class=\"badge ci\""));
         assert!(row.contains("aria-label=\"Unread notification\""));
+    }
+
+    #[test]
+    fn notification_icon_does_not_use_merged_authored_reason() {
+        let row = render_item(
+            &PullRequestItem {
+                reason: Some("author".to_string()),
+                ..notification_item()
+            },
+            Utc.timestamp_opt(7_200, 0).unwrap(),
+        );
+
+        assert!(row.contains("class=\"badge notify\""));
+        assert!(!row.contains("class=\"badge authored\""));
     }
 
     #[test]
