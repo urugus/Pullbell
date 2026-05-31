@@ -1060,7 +1060,9 @@ fn render_account_settings(snapshot: &AppState) -> String {
 }
 
 fn render_update_settings(snapshot: &AppState) -> String {
-    let note = if let Some(update) = &snapshot.available_update {
+    let note = if snapshot.is_installing_update {
+        "Updating with Homebrew. A restart prompt will appear when it is ready.".to_string()
+    } else if let Some(update) = &snapshot.available_update {
         format!("Update available: v{}", escape_html(&update.latest_version))
     } else if snapshot.is_checking_updates {
         "Checking the latest release.".to_string()
@@ -1077,8 +1079,10 @@ fn render_update_settings(snapshot: &AppState) -> String {
     );
 
     if let Some(update) = &snapshot.available_update {
-        if update.download_url.is_some() {
-            html.push_str(r#"<button class="tool primary" onclick="send('install-update')">Install update</button>"#);
+        if snapshot.is_installing_update {
+            html.push_str(r#"<button class="tool primary" disabled>Updating...</button>"#);
+        } else {
+            html.push_str(r#"<button class="tool primary" onclick="send('install-update')">Update with Homebrew</button>"#);
         }
         html.push_str(&format!(
             r#"<button class="tool" data-cmd="open:{}" onclick="send(this.dataset.cmd)">Open release</button>"#,
@@ -1181,6 +1185,10 @@ fn render_pinned(snapshot: &AppState) -> String {
             r#"<div class="pinned"><div class="pinned-title">GitHub sign-in is waiting</div><div class="pinned-body">Enter this code on GitHub. It was copied to the clipboard.</div><div class="code">{}</div></div>"#,
             escape_html(&auth.user_code)
         ));
+    } else if snapshot.is_installing_update {
+        html.push_str(
+            r#"<div class="pinned"><div class="pinned-title">Updating Pullbell</div><div class="pinned-body">Homebrew is updating the app. A restart prompt will appear when it is ready.</div></div>"#,
+        );
     } else if let Some(update) = &snapshot.available_update {
         html.push_str(&format!(
             r#"<div class="pinned"><div class="pinned-title">Update available: v{}</div><div class="pinned-body">A newer Pullbell release is ready.</div></div>"#,
