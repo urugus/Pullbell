@@ -7,6 +7,12 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
+## 0.9.4
+
+- Fixed menu bar panel focus handling so the panel remains visible during
+  initial presentation while still auto-hiding after normal focus loss.
+- Open the related pull request when clicking a Pullbell desktop notification.
+
 ## 0.9.3
 
 - Changed in-app update installation to delegate to the Homebrew Cask, matching
