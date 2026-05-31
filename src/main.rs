@@ -231,8 +231,10 @@ impl PanelFocusState {
 }
 
 fn show_panel_near(panel: &mut panel::Panel, rect: Rect, panel_focus_state: &mut PanelFocusState) {
+    let was_visible = panel.is_visible();
     panel.show_near(rect);
-    *panel_focus_state = PanelFocusState::showing(Instant::now());
+    *panel_focus_state =
+        panel_focus_state_after_show(Instant::now(), was_visible, *panel_focus_state);
 }
 
 fn show_panel_near_or_default(
@@ -240,13 +242,27 @@ fn show_panel_near_or_default(
     rect: Option<Rect>,
     panel_focus_state: &mut PanelFocusState,
 ) {
+    let was_visible = panel.is_visible();
     panel.show_near_or_default(rect);
-    *panel_focus_state = PanelFocusState::showing(Instant::now());
+    *panel_focus_state =
+        panel_focus_state_after_show(Instant::now(), was_visible, *panel_focus_state);
 }
 
 fn hide_panel(panel: &mut panel::Panel, panel_focus_state: &mut PanelFocusState) {
     panel.hide();
     *panel_focus_state = PanelFocusState::Hidden;
+}
+
+fn panel_focus_state_after_show(
+    now: Instant,
+    was_visible: bool,
+    current_state: PanelFocusState,
+) -> PanelFocusState {
+    if was_visible && current_state == PanelFocusState::Focused {
+        PanelFocusState::Focused
+    } else {
+        PanelFocusState::showing(now)
+    }
 }
 
 fn should_ignore_panel_blur(now: Instant, panel_focus_state: PanelFocusState) -> bool {
@@ -302,6 +318,24 @@ mod tests {
             }
         ));
         assert!(!should_ignore_panel_blur(now, PanelFocusState::Hidden));
+    }
+
+    #[test]
+    fn preserves_focused_state_when_showing_visible_panel_again() {
+        let now = Instant::now();
+
+        assert_eq!(
+            panel_focus_state_after_show(now, true, PanelFocusState::Focused),
+            PanelFocusState::Focused
+        );
+        assert!(matches!(
+            panel_focus_state_after_show(now, false, PanelFocusState::Focused),
+            PanelFocusState::Showing { .. }
+        ));
+        assert!(matches!(
+            panel_focus_state_after_show(now, true, PanelFocusState::Hidden),
+            PanelFocusState::Showing { .. }
+        ));
     }
 
     #[test]
