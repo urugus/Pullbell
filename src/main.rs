@@ -573,6 +573,13 @@ fn spawn_update_check(
             let _ = proxy.send_event(AppEvent::StateChanged);
             return;
         }
+        if guard.is_installing_update {
+            if show_status {
+                guard.update_status = Some("Homebrew update is already in progress".to_string());
+            }
+            let _ = proxy.send_event(AppEvent::StateChanged);
+            return;
+        }
 
         guard.is_checking_updates = true;
         if show_status {
@@ -922,39 +929,58 @@ fn start_app_update(state: &Arc<Mutex<AppState>>, proxy: &EventLoopProxy<AppEven
     let Some(update) = update else {
         let mut guard = state.lock().expect("state lock");
         guard.available_update = None;
+        guard.is_installing_update = false;
         guard.update_status = Some("There is no update ready to install.".to_string());
         let _ = proxy.send_event(AppEvent::StateChanged);
         return;
     };
 
-    let (Some(download_url), Some(download_name), Some(checksum_url)) = (
-        update.download_url,
-        update.download_name,
-        update.checksum_url,
-    ) else {
+    if state.lock().expect("state lock").is_installing_update {
         let mut guard = state.lock().expect("state lock");
-        guard.available_update = None;
-        guard.update_status =
-            Some("This release does not include a verified app update.".to_string());
+        guard.update_status = Some("Homebrew update is already in progress".to_string());
         let _ = proxy.send_event(AppEvent::StateChanged);
         return;
-    };
+    }
 
-    match updater::start_app_update(
-        &download_url,
-        &download_name,
-        &checksum_url,
-        &update.latest_version,
-    ) {
-        Ok(()) => {
+    match updater::start_app_update(&update.latest_version) {
+        Ok(mut child) => {
             let mut guard = state.lock().expect("state lock");
-            guard.available_update = None;
-            guard.update_status =
-                Some("Update started. Pullbell will restart when it is ready.".to_string());
+            guard.is_installing_update = true;
+            guard.update_status = Some(
+                "Updating with Homebrew. A restart prompt will appear when it is ready."
+                    .to_string(),
+            );
+            drop(guard);
+
+            let state = Arc::clone(state);
+            let proxy = proxy.clone();
+            let latest_version = update.latest_version;
+            std::thread::spawn(move || {
+                let status = child.wait();
+                let mut guard = state.lock().expect("state lock");
+                guard.is_installing_update = false;
+                match status {
+                    Ok(status) if status.success() => {
+                        guard.available_update = None;
+                        guard.update_status =
+                            Some("Homebrew update completed. Pullbell is restarting.".to_string());
+                    }
+                    Ok(status) => {
+                        guard.update_status = Some(updater::update_failed_message(
+                            status.code(),
+                            &latest_version,
+                        ));
+                    }
+                    Err(error) => {
+                        guard.update_status = Some(format!("Homebrew update failed: {error:#}"));
+                    }
+                }
+                let _ = proxy.send_event(AppEvent::StateChanged);
+            });
         }
         Err(error) => {
             let mut guard = state.lock().expect("state lock");
-            guard.available_update = None;
+            guard.is_installing_update = false;
             guard.update_status = Some(format!("Update could not start: {error:#}"));
         }
     }

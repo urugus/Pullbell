@@ -69,9 +69,11 @@ Pullbell runs as a menu bar app. Open Pullbell, click the `PR` menu bar item,
 open Settings, then choose `Sign in with GitHub`.
 
 Pullbell checks GitHub Releases for newer versions and shows an update notice in
-the panel when a release is available. Release app bundles can verify and install
-the matching update archive from Settings, then restart Pullbell without opening
-Terminal.
+the panel when a release is available. When Pullbell is installed as the
+Homebrew Cask, Settings can run the Homebrew update in the background, verify
+that the expected app version was installed, and restart Pullbell without
+opening Terminal. Update logs are written to
+`~/Library/Application Support/pullbell/homebrew-update.log`.
 
 Release builds are ad-hoc signed so the app bundle has a valid local code
 signature without requiring a paid Apple Developer Program membership. Because
@@ -197,7 +199,8 @@ free install path:
 brew install urugus/tap/pullbell
 ```
 
-The Cask remains available for unsigned prebuilt app bundle testing:
+The Cask is the app-bundle install path and is required for in-app updates from
+Settings:
 
 ```sh
 brew install --cask urugus/tap/pullbell
