@@ -25,7 +25,7 @@ use notifications::NotificationTracker;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(300);
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60 * 12);
-const PANEL_BLUR_GRACE_PERIOD: Duration = Duration::from_millis(300);
+const PANEL_BLUR_GRACE_PERIOD: Duration = Duration::from_secs(2);
 const DEFAULT_CLIENT_ID: &str = "Ov23liYs8QgtSc19mkZs";
 
 #[derive(Debug, Clone)]
@@ -75,8 +75,7 @@ fn main() -> Result<()> {
     let initial_snapshot = state.lock().expect("state lock").clone();
     let mut panel = panel::Panel::new(&event_loop, proxy.clone(), &initial_snapshot)?;
     let mut last_tray_rect = None::<Rect>;
-    let mut ignore_panel_blur_until = None::<Instant>;
-    let mut panel_focused_after_show = false;
+    let mut panel_focus_state = PanelFocusState::Hidden;
 
     let initial_token = storage::load_token()?;
     if initial_token.is_some() {
@@ -111,15 +110,10 @@ fn main() -> Result<()> {
                     } = tray_event
                     {
                         last_tray_rect = Some(rect);
-                        let was_visible = panel.is_visible();
-                        panel.toggle_near(rect);
-                        if was_visible {
-                            ignore_panel_blur_until = None;
-                            panel_focused_after_show = false;
+                        if panel.is_visible() {
+                            hide_panel(&mut panel, &mut panel_focus_state);
                         } else {
-                            ignore_panel_blur_until =
-                                Some(Instant::now() + PANEL_BLUR_GRACE_PERIOD);
-                            panel_focused_after_show = false;
+                            show_panel_near(&mut panel, rect, &mut panel_focus_state);
                         }
                     }
                 }
@@ -142,15 +136,11 @@ fn main() -> Result<()> {
                 );
             }
             Event::Opened { urls } if urls.iter().any(is_pullbell_show_url) => {
-                panel.show_near_or_default(last_tray_rect);
-                ignore_panel_blur_until = Some(Instant::now() + PANEL_BLUR_GRACE_PERIOD);
-                panel_focused_after_show = false;
+                show_panel_near_or_default(&mut panel, last_tray_rect, &mut panel_focus_state);
             }
             Event::UserEvent(AppEvent::PanelCommand(command)) => {
                 if command == "hide" {
-                    panel.hide();
-                    ignore_panel_blur_until = None;
-                    panel_focused_after_show = false;
+                    hide_panel(&mut panel, &mut panel_focus_state);
                     return;
                 }
 
@@ -191,9 +181,7 @@ fn main() -> Result<()> {
                             }
                         }
                         AppCommand::SignOut => {
-                            panel.hide();
-                            ignore_panel_blur_until = None;
-                            panel_focused_after_show = false;
+                            hide_panel(&mut panel, &mut panel_focus_state);
                             let _ = command_tx.send(AppCommand::SignOut);
                         }
                         AppCommand::Quit => {
@@ -210,36 +198,78 @@ fn main() -> Result<()> {
                 event: WindowEvent::Focused(true),
                 ..
             } if window_id == panel.window_id() => {
-                ignore_panel_blur_until = None;
-                panel_focused_after_show = true;
+                panel_focus_state = PanelFocusState::Focused;
             }
             Event::WindowEvent {
                 window_id,
                 event: WindowEvent::Focused(false),
                 ..
             } if window_id == panel.window_id() => {
-                if should_ignore_panel_blur(
-                    Instant::now(),
-                    ignore_panel_blur_until,
-                    panel_focused_after_show,
-                ) {
+                if should_ignore_panel_blur(Instant::now(), panel_focus_state) {
                     return;
                 }
-                ignore_panel_blur_until = None;
-                panel_focused_after_show = false;
-                panel.hide();
+                hide_panel(&mut panel, &mut panel_focus_state);
             }
             _ => {}
         }
     });
 }
 
-fn should_ignore_panel_blur(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PanelFocusState {
+    Hidden,
+    Showing { ignore_blur_until: Instant },
+    Focused,
+}
+
+impl PanelFocusState {
+    fn showing(now: Instant) -> Self {
+        Self::Showing {
+            ignore_blur_until: now + PANEL_BLUR_GRACE_PERIOD,
+        }
+    }
+}
+
+fn show_panel_near(panel: &mut panel::Panel, rect: Rect, panel_focus_state: &mut PanelFocusState) {
+    let was_visible = panel.is_visible();
+    panel.show_near(rect);
+    *panel_focus_state =
+        panel_focus_state_after_show(Instant::now(), was_visible, *panel_focus_state);
+}
+
+fn show_panel_near_or_default(
+    panel: &mut panel::Panel,
+    rect: Option<Rect>,
+    panel_focus_state: &mut PanelFocusState,
+) {
+    let was_visible = panel.is_visible();
+    panel.show_near_or_default(rect);
+    *panel_focus_state =
+        panel_focus_state_after_show(Instant::now(), was_visible, *panel_focus_state);
+}
+
+fn hide_panel(panel: &mut panel::Panel, panel_focus_state: &mut PanelFocusState) {
+    panel.hide();
+    *panel_focus_state = PanelFocusState::Hidden;
+}
+
+fn panel_focus_state_after_show(
     now: Instant,
-    ignore_until: Option<Instant>,
-    panel_focused_after_show: bool,
-) -> bool {
-    !panel_focused_after_show && ignore_until.is_some_and(|ignore_until| now < ignore_until)
+    was_visible: bool,
+    current_state: PanelFocusState,
+) -> PanelFocusState {
+    if was_visible && current_state == PanelFocusState::Focused {
+        PanelFocusState::Focused
+    } else {
+        PanelFocusState::showing(now)
+    }
+}
+
+fn should_ignore_panel_blur(now: Instant, panel_focus_state: PanelFocusState) -> bool {
+    matches!(
+        panel_focus_state,
+        PanelFocusState::Showing { ignore_blur_until } if now < ignore_blur_until
+    )
 }
 
 fn is_pullbell_show_url(url: &url::Url) -> bool {
@@ -271,21 +301,41 @@ mod tests {
     }
 
     #[test]
-    fn ignores_panel_blur_only_during_grace_period() {
+    fn ignores_initial_panel_blur_only_during_grace_period() {
         let now = Instant::now();
 
         assert!(should_ignore_panel_blur(
             now,
-            Some(now + PANEL_BLUR_GRACE_PERIOD),
-            false
+            PanelFocusState::Showing {
+                ignore_blur_until: now + PANEL_BLUR_GRACE_PERIOD
+            }
         ));
+        assert!(!should_ignore_panel_blur(now, PanelFocusState::Focused));
         assert!(!should_ignore_panel_blur(
             now,
-            Some(now + PANEL_BLUR_GRACE_PERIOD),
-            true
+            PanelFocusState::Showing {
+                ignore_blur_until: now
+            }
         ));
-        assert!(!should_ignore_panel_blur(now, Some(now), false));
-        assert!(!should_ignore_panel_blur(now, None, false));
+        assert!(!should_ignore_panel_blur(now, PanelFocusState::Hidden));
+    }
+
+    #[test]
+    fn preserves_focused_state_when_showing_visible_panel_again() {
+        let now = Instant::now();
+
+        assert_eq!(
+            panel_focus_state_after_show(now, true, PanelFocusState::Focused),
+            PanelFocusState::Focused
+        );
+        assert!(matches!(
+            panel_focus_state_after_show(now, false, PanelFocusState::Focused),
+            PanelFocusState::Showing { .. }
+        ));
+        assert!(matches!(
+            panel_focus_state_after_show(now, true, PanelFocusState::Hidden),
+            PanelFocusState::Showing { .. }
+        ));
     }
 
     #[test]
