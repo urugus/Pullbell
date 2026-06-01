@@ -7,6 +7,12 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
+## 0.9.5
+
+- Updated the macOS app and menu bar icons to use the Pullbell logo mark.
+- Added bundled app icon packaging so generated `.app` bundles show the
+  Pullbell icon.
+
 ## 0.9.4
 
 - Fixed menu bar panel focus handling so the panel remains visible during
