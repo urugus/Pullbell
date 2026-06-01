@@ -2081,6 +2081,7 @@ dependencies = [
  "arboard",
  "chrono",
  "dirs",
+ "image",
  "keyring",
  "mac-notification-sys",
  "objc2-app-kit",

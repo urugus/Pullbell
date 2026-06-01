@@ -9,6 +9,7 @@ fi
 binary_path="$1"
 output_dir="$2"
 version="${3:-}"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [ ! -x "$binary_path" ]; then
   echo "binary is not executable: $binary_path" >&2
@@ -29,6 +30,7 @@ mkdir -p "$macos_dir" "$resources_dir"
 
 cp "$binary_path" "$macos_dir/pullbell"
 chmod 755 "$macos_dir/pullbell"
+cp "$repo_root/assets/pullbell-app-icon.icns" "$resources_dir/Pullbell.icns"
 
 cat > "$contents_dir/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -41,6 +43,8 @@ cat > "$contents_dir/Info.plist" <<PLIST
   <string>pullbell</string>
   <key>CFBundleIdentifier</key>
   <string>com.github.urugus.pullbell</string>
+  <key>CFBundleIconFile</key>
+  <string>Pullbell</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
