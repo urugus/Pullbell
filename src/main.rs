@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
-use mac_notification_sys::{MainButton, Notification, NotificationResponse, send_notification};
+use mac_notification_sys::send_notification;
 use pullbell::auth::OAuthDeviceClient;
 use pullbell::github::GitHubClient;
 use pullbell::model::{LocalDonePr, PullRequestItem, apply_local_done_prs};
@@ -20,6 +20,7 @@ use tray_icon::{MouseButton, MouseButtonState, Rect, TrayIconEvent};
 mod menu;
 mod notifications;
 mod panel;
+mod pr_notifications;
 
 use notifications::NotificationTracker;
 
@@ -128,7 +129,7 @@ fn main() -> Result<()> {
                 }
             }
             Event::UserEvent(AppEvent::Notify(item)) => {
-                spawn_pr_notification(item);
+                send_pr_notification(item);
             }
             Event::Opened { urls } if urls.iter().any(is_pullbell_show_url) => {
                 show_panel_near_or_default(&mut panel, last_tray_rect, &mut panel_focus_state);
@@ -275,34 +276,10 @@ fn is_pullbell_show_url(url: &url::Url) -> bool {
         && url.fragment().is_none()
 }
 
-fn spawn_pr_notification(item: PullRequestItem) {
-    let subtitle = item.kind.label().to_string();
-    let message = item.display_title();
-    let url = item.url;
-
-    let _ = std::thread::spawn(move || {
-        let mut options = Notification::new();
-        options
-            .wait_for_click(true)
-            .main_button(MainButton::SingleAction("Open"));
-
-        match send_notification("Pullbell", Some(&subtitle), &message, Some(&options)) {
-            Ok(response) if notification_response_opens_pr(&response) => {
-                let _ = open::that(url);
-            }
-            Ok(_) => {}
-            Err(error) => {
-                eprintln!("failed to deliver PR notification: {error:#}");
-            }
-        }
-    });
-}
-
-fn notification_response_opens_pr(response: &NotificationResponse) -> bool {
-    matches!(
-        response,
-        NotificationResponse::Click | NotificationResponse::ActionButton(_)
-    )
+fn send_pr_notification(item: PullRequestItem) {
+    if let Err(error) = pr_notifications::send(&item) {
+        eprintln!("failed to deliver PR notification: {error:#}");
+    }
 }
 
 #[cfg(test)]
@@ -361,18 +338,6 @@ mod tests {
             panel_focus_state_after_show(now, true, PanelFocusState::Hidden),
             PanelFocusState::Showing { .. }
         ));
-    }
-
-    #[test]
-    fn opens_pr_for_notification_clicks_and_actions() {
-        assert!(notification_response_opens_pr(&NotificationResponse::Click));
-        assert!(notification_response_opens_pr(
-            &NotificationResponse::ActionButton("Open".to_string())
-        ));
-        assert!(!notification_response_opens_pr(
-            &NotificationResponse::CloseButton("Close".to_string())
-        ));
-        assert!(!notification_response_opens_pr(&NotificationResponse::None));
     }
 
     #[test]
@@ -739,6 +704,7 @@ async fn sign_in(
         "Enter this code on the GitHub device authorization page. It was copied to the clipboard.",
         None,
     );
+    pr_notifications::install_delegate();
     let _ = open::that(&code.verification_uri);
 
     match client.wait_for_token(&code).await {
