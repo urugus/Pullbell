@@ -297,8 +297,8 @@ button {{
   width: 100%;
   min-height: 62px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px auto;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) 28px 28px auto;
+  gap: 8px;
   align-items: center;
   padding: 9px 10px 9px 0;
   border: 0;
@@ -340,7 +340,7 @@ button {{
 .row-main {{
   min-width: 0;
 }}
-.row-copy {{
+.row-action {{
   width: 28px;
   height: 28px;
   display: grid;
@@ -353,21 +353,21 @@ button {{
   visibility: hidden;
   pointer-events: none;
 }}
-.row.selected .row-copy,
-.row:focus-within .row-copy {{
+.row.selected .row-action,
+.row:focus-within .row-action {{
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
 }}
-.row-copy:hover {{
+.row-action:hover {{
   color: #ffffff;
   background: #3a404a;
 }}
-.row-copy:focus {{
+.row-action:focus {{
   outline: 1px solid rgba(255,255,255,.22);
   outline-offset: 0;
 }}
-.row-copy svg {{
+.row-action svg {{
   width: 15px;
   height: 15px;
   stroke: currentColor;
@@ -620,6 +620,43 @@ button {{
   color: #747b86;
   background: #252930;
 }}
+.repo-search {{
+  width: 100%;
+  height: 30px;
+  margin-top: 10px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 8px;
+  padding: 0 9px;
+  color: #d9dce2;
+  background: #252930;
+  font: inherit;
+  font-size: 12px;
+}}
+.repo-settings {{
+  display: grid;
+  gap: 2px;
+  padding-top: 8px;
+}}
+.repo-setting {{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 38px;
+}}
+.repo-setting-name {{
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #e7e9ee;
+  font-size: 12px;
+}}
+.repo-setting-note {{
+  margin-top: 2px;
+  color: #858b96;
+  font-size: 11px;
+}}
 .chips {{
   display: flex;
   flex-wrap: wrap;
@@ -763,6 +800,7 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
     const command =
       action === "done" ? row.dataset.doneCmd :
       action === "undo" ? row.dataset.undoCmd :
+      action === "mute-repo" ? row.dataset.muteRepoCmd :
       row.dataset.muteCmd;
     window.send(command || "missing-action:" + action);
   }};
@@ -868,6 +906,14 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
     selectedIndex = 0;
     syncFilterControls();
     window.PullbellApplyFilters();
+  }});
+
+  document.addEventListener("input", function(event) {{
+    if (!event.target.matches("[data-repository-search]")) return;
+    const query = event.target.value.trim().toLowerCase();
+    document.querySelectorAll("[data-repository-setting]").forEach(function(row) {{
+      row.hidden = query && !row.dataset.repositorySetting.toLowerCase().includes(query);
+    }});
   }});
 
   document.addEventListener("keydown", function(event) {{
@@ -1016,6 +1062,7 @@ fn render_settings(snapshot: &AppState) -> String {
 
     html.push_str(&render_account_settings(snapshot));
     html.push_str(&render_update_settings(snapshot));
+    html.push_str(&render_repository_settings(snapshot));
     html.push_str(
         r#"<section class="settings-section"><div class="settings-label">View</div><div class="setting-row"><div><div class="setting-name">Group by Repository</div><div class="setting-note">Preview control only. The notification list keeps the current order.</div></div><button class="switch" type="button" data-group-by-repository aria-label="Group by Repository" aria-pressed="false" onclick="window.PullbellToggleGroupByRepository()"></button></div></section>"#,
     );
@@ -1111,6 +1158,63 @@ fn render_update_settings(snapshot: &AppState) -> String {
     }
 
     html.push_str("</div></section>");
+    html
+}
+
+fn render_repository_settings(snapshot: &AppState) -> String {
+    let mut repositories = snapshot
+        .settings
+        .known_repositories
+        .iter()
+        .chain(snapshot.settings.muted_repositories.iter())
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    repositories.sort();
+
+    let muted_count = snapshot.settings.muted_repositories.len();
+    let mut html = format!(
+        r#"<section class="settings-section"><div class="settings-label">Repositories</div><div class="setting-row"><div><div class="setting-name">Muted repositories</div><div class="setting-note">Muted repositories are hidden from Pullbell lists and desktop notifications. GitHub Watch settings are not changed.</div></div><div class="counter">{}</div></div>"#,
+        muted_count
+    );
+
+    if repositories.is_empty() {
+        html.push_str(r#"<div class="empty">No repositories seen yet</div>"#);
+    } else {
+        html.push_str(
+            r#"<input class="repo-search" type="search" placeholder="Search repositories" aria-label="Search repositories" data-repository-search>"#,
+        );
+        html.push_str(r#"<div class="repo-settings">"#);
+        for repo in repositories {
+            let muted = snapshot.settings.muted_repositories.contains(&repo);
+            let command = if muted {
+                format!("unmute-repo:{repo}")
+            } else {
+                format!("mute-repo:{repo}")
+            };
+            let action_label = if muted { "Unmute" } else { "Mute" };
+            let note = if muted {
+                "Muted in Pullbell"
+            } else {
+                "Tracked by Pullbell"
+            };
+            html.push_str(&format!(
+                r#"<div class="repo-setting" data-repository-setting="{}"><div><div class="repo-setting-name">{}</div><div class="repo-setting-note">{}</div></div><button class="switch{}" type="button" aria-label="{} {} in Pullbell" aria-pressed="{}" data-cmd="{}" onclick="send(this.dataset.cmd)"></button></div>"#,
+                escape_attr(&repo),
+                escape_html(&repo),
+                note,
+                if muted { " on" } else { "" },
+                action_label,
+                escape_attr(&repo),
+                if muted { "true" } else { "false" },
+                escape_attr(&command)
+            ));
+        }
+        html.push_str("</div>");
+    }
+
+    html.push_str("</section>");
     html
 }
 
@@ -1296,6 +1400,7 @@ fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
         String::new()
     };
     let mute_attr = notification_action_attr("data-mute-cmd", "mute", item);
+    let mute_repo_command = format!("mute-repo:{}", item.repo);
     let reason = reason_label(item);
     let author = item.author.as_deref().unwrap_or("");
     let preview_meta = preview_meta(item, &age, &reason);
@@ -1307,10 +1412,11 @@ fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
     let copy_command = format!("copy-url:{}", item.url);
 
     format!(
-        r#"<div class="{}" data-selectable="true" data-cmd="{}" data-copy-cmd="{}" data-repo="{}" data-reason="{}" data-author="{}" data-preview-title="{}" data-preview-meta="{}" data-preview-body="{}"{}{}{} tabindex="-1" aria-selected="false" onfocusin="window.PullbellSelectElement(this)"><button class="row-open" type="button" tabindex="-1" data-row-shortcut="true" data-cmd="{}" onclick="send(this.dataset.cmd)"><div class="badge {}" title="{}" aria-label="{}">{}</div><div class="row-main"><div class="meta"><span class="repo">{}</span><span class="dot"></span><span>#{}</span><span class="dot"></span><span>{}</span></div><div class="title">{}</div></div></button><button class="row-copy" type="button" title="Copy PR URL" aria-label="Copy PR URL" data-cmd="{}" onclick="event.stopPropagation(); send(this.dataset.cmd)">{}</button><div class="age">{}</div></div>"#,
+        r#"<div class="{}" data-selectable="true" data-cmd="{}" data-copy-cmd="{}" data-mute-repo-cmd="{}" data-repo="{}" data-reason="{}" data-author="{}" data-preview-title="{}" data-preview-meta="{}" data-preview-body="{}"{}{}{} tabindex="-1" aria-selected="false" onfocusin="window.PullbellSelectElement(this)"><button class="row-open" type="button" tabindex="-1" data-row-shortcut="true" data-cmd="{}" onclick="send(this.dataset.cmd)"><div class="badge {}" title="{}" aria-label="{}">{}</div><div class="row-main"><div class="meta"><span class="repo">{}</span><span class="dot"></span><span>#{}</span><span class="dot"></span><span>{}</span></div><div class="title">{}</div></div></button><button class="row-copy row-action" type="button" title="Copy PR URL" aria-label="Copy PR URL" data-cmd="{}" onclick="event.stopPropagation(); send(this.dataset.cmd)">{}</button><button class="row-repo-mute row-action" type="button" title="Mute repository in Pullbell" aria-label="Mute repository in Pullbell" data-cmd="{}" onclick="event.stopPropagation(); send(this.dataset.cmd)">{}</button><div class="age">{}</div></div>"#,
         row_class,
         escape_attr(&command),
         escape_attr(&copy_command),
+        escape_attr(&mute_repo_command),
         escape_attr(&item.repo),
         escape_attr(&reason),
         escape_attr(author),
@@ -1331,6 +1437,8 @@ fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
         escape_html(&item.title),
         escape_attr(&copy_command),
         copy_icon(),
+        escape_attr(&mute_repo_command),
+        muted_repository_icon(),
         escape_html(&age)
     )
 }
@@ -1504,6 +1612,10 @@ fn bell_icon() -> &'static str {
     r#"<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 21a2 2 0 0 0 3.4 0"></path><path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path></svg>"#
 }
 
+fn muted_repository_icon() -> &'static str {
+    r#"<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 21a2 2 0 0 0 3.4 0"></path><path d="M17.8 17H21c0-2-3-2-3-9a6 6 0 0 0-9.3-5"></path><path d="M6.2 6.2C6.1 6.8 6 7.4 6 8c0 7-3 7-3 9h10"></path><path d="m3 3 18 18"></path></svg>"#
+}
+
 fn short_repo_name(repo: &str) -> &str {
     repo.rsplit('/').next().unwrap_or(repo)
 }
@@ -1668,6 +1780,8 @@ mod tests {
         assert!(body.contains(">Settings<"));
         assert!(body.contains(">Account<"));
         assert!(body.contains(">Updates<"));
+        assert!(body.contains(">Repositories<"));
+        assert!(body.contains(">Muted repositories<"));
         assert!(body.contains(">Group by Repository<"));
         assert!(body.contains("data-group-by-repository"));
         assert!(body.contains("onclick=\"window.PullbellToggleGroupByRepository()\""));
@@ -1736,9 +1850,9 @@ mod tests {
             ..Default::default()
         });
 
-        assert!(markup.contains(".row-copy"));
-        assert!(markup.contains(".row.selected .row-copy"));
-        assert!(markup.contains(".row:focus-within .row-copy"));
+        assert!(markup.contains(".row-action"));
+        assert!(markup.contains(".row.selected .row-action"));
+        assert!(markup.contains(".row:focus-within .row-action"));
         assert!(markup.contains("pointer-events: none"));
         assert!(markup.contains("pointer-events: auto"));
         assert!(markup.contains("visibility: hidden"));
@@ -1752,7 +1866,7 @@ mod tests {
             Utc.timestamp_opt(7_200, 0).unwrap(),
         );
         let copy_button = row
-            .split("<button class=\"row-copy\"")
+            .split("<button class=\"row-copy row-action\"")
             .nth(1)
             .expect("copy button markup");
 
@@ -1769,10 +1883,43 @@ mod tests {
             &item(PrKind::ReviewRequested),
             Utc.timestamp_opt(7_200, 0).unwrap(),
         );
-        let copy_index = row.find("class=\"row-copy\"").expect("copy button");
+        let copy_index = row
+            .find("class=\"row-copy row-action\"")
+            .expect("copy button");
         let age_index = row.find("class=\"age\"").expect("age");
 
         assert!(copy_index < age_index);
+    }
+
+    #[test]
+    fn renders_repository_mute_action_for_rows() {
+        let row = render_item(
+            &item(PrKind::ReviewRequested),
+            Utc.timestamp_opt(7_200, 0).unwrap(),
+        );
+
+        assert!(row.contains("data-mute-repo-cmd=\"mute-repo:owner/repo\""));
+        assert!(row.contains("class=\"row-repo-mute row-action\""));
+        assert!(row.contains("aria-label=\"Mute repository in Pullbell\""));
+    }
+
+    #[test]
+    fn renders_repository_settings() {
+        let snapshot = AppState {
+            settings: pullbell::model::AppSettings {
+                known_repositories: ["owner/repo".to_string(), "owner/other".to_string()].into(),
+                muted_repositories: ["owner/repo".to_string()].into(),
+            },
+            ..Default::default()
+        };
+
+        let body = render_repository_settings(&snapshot);
+
+        assert!(body.contains("Search repositories"));
+        assert!(body.contains("data-repository-setting=\"owner/repo\""));
+        assert!(body.contains("data-cmd=\"unmute-repo:owner/repo\""));
+        assert!(body.contains("data-cmd=\"mute-repo:owner/other\""));
+        assert!(body.contains("GitHub Watch settings are not changed."));
     }
 
     #[test]

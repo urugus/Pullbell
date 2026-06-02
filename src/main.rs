@@ -3,7 +3,10 @@ use chrono::Utc;
 use mac_notification_sys::send_notification;
 use pullbell::auth::OAuthDeviceClient;
 use pullbell::github::GitHubClient;
-use pullbell::model::{LocalDonePr, PullRequestItem, apply_local_done_prs};
+use pullbell::model::{
+    AppSettings, LocalDonePr, PullRequestItem, apply_local_done_prs, filter_muted_repositories,
+    is_valid_repository_name,
+};
 use pullbell::state::{AppState, PendingAuth};
 use pullbell::storage;
 use pullbell::updater;
@@ -52,6 +55,8 @@ enum AppCommand {
     MarkPrDone(String),
     UndoPrDone(String),
     MuteNotification(String),
+    MuteRepository(String),
+    UnmuteRepository(String),
     OpenUrl(String),
     Quit,
 }
@@ -60,13 +65,29 @@ fn main() -> Result<()> {
     let runtime = Runtime::new().context("starting async runtime")?;
     let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
-    let (local_done_prs, last_error) = match storage::load_done_prs() {
-        Ok(done_prs) => (done_prs, None),
-        Err(error) => (Default::default(), Some(format!("{error:#}"))),
+    let mut startup_errors = Vec::new();
+    let local_done_prs = match storage::load_done_prs() {
+        Ok(done_prs) => done_prs,
+        Err(error) => {
+            startup_errors.push(format!("{error:#}"));
+            Default::default()
+        }
+    };
+    let settings = match storage::load_settings() {
+        Ok(settings) => settings,
+        Err(error) => {
+            startup_errors.push(format!("{error:#}"));
+            AppSettings::default()
+        }
     };
     let state = Arc::new(Mutex::new(AppState {
         local_done_prs,
-        last_error,
+        settings,
+        last_error: if startup_errors.is_empty() {
+            None
+        } else {
+            Some(startup_errors.join("\n"))
+        },
         ..Default::default()
     }));
     let (command_tx, command_rx) = mpsc::unbounded_channel();
@@ -388,6 +409,27 @@ mod tests {
             command => panic!("unexpected command: {command:?}"),
         }
     }
+
+    #[test]
+    fn accepts_repository_mute_commands() {
+        let state = Arc::new(Mutex::new(AppState::default()));
+
+        match panel_command(&state, "mute-repo:owner/repo".to_string()) {
+            Some(AppCommand::MuteRepository(repo)) => {
+                assert_eq!(repo, "owner/repo");
+            }
+            command => panic!("unexpected command: {command:?}"),
+        }
+
+        match panel_command(&state, "unmute-repo:owner/repo".to_string()) {
+            Some(AppCommand::UnmuteRepository(repo)) => {
+                assert_eq!(repo, "owner/repo");
+            }
+            command => panic!("unexpected command: {command:?}"),
+        }
+
+        assert!(panel_command(&state, "mute-repo:owner".to_string()).is_none());
+    }
 }
 
 fn panel_command(state: &Arc<Mutex<AppState>>, command: String) -> Option<AppCommand> {
@@ -413,6 +455,20 @@ fn panel_command(state: &Arc<Mutex<AppState>>, command: String) -> Option<AppCom
 
             if let Some(thread_id) = command.strip_prefix("mute:").filter(|id| is_thread_id(id)) {
                 return Some(AppCommand::MuteNotification(thread_id.to_string()));
+            }
+
+            if let Some(repo) = command
+                .strip_prefix("mute-repo:")
+                .filter(|repo| is_valid_repository_name(repo))
+            {
+                return Some(AppCommand::MuteRepository(repo.to_string()));
+            }
+
+            if let Some(repo) = command
+                .strip_prefix("unmute-repo:")
+                .filter(|repo| is_valid_repository_name(repo))
+            {
+                return Some(AppCommand::UnmuteRepository(repo.to_string()));
             }
 
             if let Some(url) = command
@@ -554,7 +610,9 @@ async fn run_worker(
                             signout_errors.push(format!("{error:#}"));
                         }
                         let mut guard = state.lock().expect("state lock");
+                        let settings = guard.settings.clone();
                         *guard = AppState::default();
+                        guard.settings = settings;
                         guard.last_error = if signout_errors.is_empty() {
                             None
                         } else {
@@ -587,6 +645,15 @@ async fn run_worker(
                             NotificationThreadAction::Mute,
                         )
                         .await;
+                    }
+                    AppCommand::MuteRepository(repo) => {
+                        mute_repository(&state, &proxy, &repo);
+                    }
+                    AppCommand::UnmuteRepository(repo) => {
+                        if unmute_repository(&state, &proxy, &repo) {
+                            notification_tracker.reset();
+                            refresh(&state, &proxy, &mut notification_tracker, token_cache.as_deref()).await;
+                        }
                     }
                     AppCommand::OpenUrl(_) => {}
                     AppCommand::CopySignInCode => {}
@@ -760,10 +827,18 @@ async fn refresh(
         Ok(viewer) => match client.pull_requests_for(&viewer.login).await {
             Ok(mut items) => {
                 let mut done_prs_to_save = None;
+                let mut settings_to_save = None;
                 {
                     let mut guard = state.lock().expect("state lock");
+                    if guard
+                        .settings
+                        .remember_repositories(items.iter().map(|item| item.repo.as_str()))
+                    {
+                        settings_to_save = Some(guard.settings.clone());
+                    }
                     let previous_done_prs = guard.local_done_prs.clone();
                     apply_local_done_prs(&mut items, &mut guard.local_done_prs);
+                    items = filter_muted_repositories(items, &guard.settings);
                     if guard.local_done_prs != previous_done_prs {
                         done_prs_to_save = Some(guard.local_done_prs.clone());
                     }
@@ -784,6 +859,11 @@ async fn refresh(
 
                 if let Some(done_prs) = done_prs_to_save
                     && let Err(error) = storage::save_done_prs(&done_prs)
+                {
+                    set_error(state, format!("{error:#}"));
+                }
+                if let Some(settings) = settings_to_save
+                    && let Err(error) = storage::save_settings(&settings)
                 {
                     set_error(state, format!("{error:#}"));
                 }
@@ -898,6 +978,66 @@ fn undo_pr_done(state: &Arc<Mutex<AppState>>, proxy: &EventLoopProxy<AppEvent>, 
         }
     }
     let _ = proxy.send_event(AppEvent::StateChanged);
+}
+
+fn mute_repository(state: &Arc<Mutex<AppState>>, proxy: &EventLoopProxy<AppEvent>, repo: &str) {
+    if !is_valid_repository_name(repo) {
+        set_error(state, "Repository is not available.".to_string());
+        let _ = proxy.send_event(AppEvent::StateChanged);
+        return;
+    }
+
+    let mut settings = state.lock().expect("state lock").settings.clone();
+    settings.mute_repository(repo);
+
+    if let Err(error) = storage::save_settings(&settings) {
+        set_error(state, format!("{error:#}"));
+        let _ = proxy.send_event(AppEvent::StateChanged);
+        return;
+    }
+
+    {
+        let mut guard = state.lock().expect("state lock");
+        guard.settings = settings;
+        guard.pull_requests.retain(|item| item.repo != repo);
+        guard.last_error = None;
+        guard.last_status = Some(format!("Muted {repo} in Pullbell"));
+    }
+    let _ = proxy.send_event(AppEvent::StateChanged);
+}
+
+fn unmute_repository(
+    state: &Arc<Mutex<AppState>>,
+    proxy: &EventLoopProxy<AppEvent>,
+    repo: &str,
+) -> bool {
+    if !is_valid_repository_name(repo) {
+        set_error(state, "Repository is not available.".to_string());
+        let _ = proxy.send_event(AppEvent::StateChanged);
+        return false;
+    }
+
+    let mut settings = state.lock().expect("state lock").settings.clone();
+    if !settings.unmute_repository(repo) {
+        set_error(state, "Repository is not muted.".to_string());
+        let _ = proxy.send_event(AppEvent::StateChanged);
+        return false;
+    }
+
+    if let Err(error) = storage::save_settings(&settings) {
+        set_error(state, format!("{error:#}"));
+        let _ = proxy.send_event(AppEvent::StateChanged);
+        return false;
+    }
+
+    {
+        let mut guard = state.lock().expect("state lock");
+        guard.settings = settings;
+        guard.last_error = None;
+        guard.last_status = Some(format!("Unmuted {repo} in Pullbell"));
+    }
+    let _ = proxy.send_event(AppEvent::StateChanged);
+    true
 }
 
 async fn act_on_notification_thread(

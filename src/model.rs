@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PrKind {
@@ -72,6 +72,64 @@ pub struct LocalDonePr {
 }
 
 pub type LocalDonePrs = BTreeMap<String, LocalDonePr>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct AppSettings {
+    #[serde(default)]
+    pub muted_repositories: BTreeSet<String>,
+    #[serde(default)]
+    pub known_repositories: BTreeSet<String>,
+}
+
+impl AppSettings {
+    pub fn remember_repositories<'a>(
+        &mut self,
+        repositories: impl Iterator<Item = &'a str>,
+    ) -> bool {
+        let previous = self.known_repositories.clone();
+        self.known_repositories.extend(
+            repositories
+                .filter(|repo| is_valid_repository_name(repo))
+                .map(ToString::to_string),
+        );
+        self.known_repositories != previous
+    }
+
+    pub fn mute_repository(&mut self, repo: &str) -> bool {
+        if !is_valid_repository_name(repo) {
+            return false;
+        }
+
+        self.known_repositories.insert(repo.to_string());
+        self.muted_repositories.insert(repo.to_string())
+    }
+
+    pub fn unmute_repository(&mut self, repo: &str) -> bool {
+        self.muted_repositories.remove(repo)
+    }
+
+    pub fn is_repository_muted(&self, repo: &str) -> bool {
+        self.muted_repositories.contains(repo)
+    }
+}
+
+pub fn filter_muted_repositories(
+    items: Vec<PullRequestItem>,
+    settings: &AppSettings,
+) -> Vec<PullRequestItem> {
+    items
+        .into_iter()
+        .filter(|item| !settings.is_repository_muted(&item.repo))
+        .collect()
+}
+
+pub fn is_valid_repository_name(value: &str) -> bool {
+    let Some((owner, repo)) = value.split_once('/') else {
+        return false;
+    };
+
+    !owner.is_empty() && !repo.is_empty() && !repo.contains('/')
+}
 
 pub fn apply_local_done_prs(items: &mut Vec<PullRequestItem>, local_done_prs: &mut LocalDonePrs) {
     let mut stale_ids = Vec::new();
@@ -384,5 +442,42 @@ mod tests {
         assert!(item("1", PrKind::ReviewRequested, 10).is_todo());
         assert!(item("2", PrKind::Notification, 10).is_todo());
         assert!(!item("3", PrKind::Authored, 10).is_todo());
+    }
+
+    #[test]
+    fn settings_remember_and_mute_repositories() {
+        let mut settings = AppSettings::default();
+
+        assert!(settings.remember_repositories(["owner/repo", "bad"].into_iter()));
+        assert_eq!(
+            settings.known_repositories,
+            BTreeSet::from(["owner/repo".to_string()])
+        );
+        assert!(settings.mute_repository("owner/repo"));
+        assert!(settings.is_repository_muted("owner/repo"));
+        assert!(!settings.mute_repository("bad"));
+        assert!(settings.unmute_repository("owner/repo"));
+        assert!(!settings.is_repository_muted("owner/repo"));
+    }
+
+    #[test]
+    fn filters_muted_repositories() {
+        let settings = AppSettings {
+            muted_repositories: BTreeSet::from(["org/repo".to_string()]),
+            ..Default::default()
+        };
+        let items = filter_muted_repositories(
+            vec![
+                item("1", PrKind::ReviewRequested, 20),
+                PullRequestItem {
+                    repo: "org/other".to_string(),
+                    ..item("2", PrKind::Notification, 30)
+                },
+            ],
+            &settings,
+        );
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].repo, "org/other");
     }
 }
