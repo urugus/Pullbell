@@ -988,7 +988,13 @@ fn mute_repository(state: &Arc<Mutex<AppState>>, proxy: &EventLoopProxy<AppEvent
     }
 
     let mut settings = state.lock().expect("state lock").settings.clone();
-    settings.mute_repository(repo);
+    if !settings.mute_repository(repo) {
+        let mut guard = state.lock().expect("state lock");
+        guard.last_error = None;
+        guard.last_status = Some(format!("{repo} is already muted in Pullbell"));
+        let _ = proxy.send_event(AppEvent::StateChanged);
+        return;
+    }
 
     if let Err(error) = storage::save_settings(&settings) {
         set_error(state, format!("{error:#}"));

@@ -1162,16 +1162,12 @@ fn render_update_settings(snapshot: &AppState) -> String {
 }
 
 fn render_repository_settings(snapshot: &AppState) -> String {
-    let mut repositories = snapshot
+    let repositories = snapshot
         .settings
         .known_repositories
-        .iter()
-        .chain(snapshot.settings.muted_repositories.iter())
+        .union(&snapshot.settings.muted_repositories)
         .cloned()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
         .collect::<Vec<_>>();
-    repositories.sort();
 
     let muted_count = snapshot.settings.muted_repositories.len();
     let mut html = format!(

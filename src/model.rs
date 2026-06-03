@@ -86,13 +86,13 @@ impl AppSettings {
         &mut self,
         repositories: impl Iterator<Item = &'a str>,
     ) -> bool {
-        let previous = self.known_repositories.clone();
+        let previous_len = self.known_repositories.len();
         self.known_repositories.extend(
             repositories
                 .filter(|repo| is_valid_repository_name(repo))
                 .map(ToString::to_string),
         );
-        self.known_repositories != previous
+        self.known_repositories.len() != previous_len
     }
 
     pub fn mute_repository(&mut self, repo: &str) -> bool {
