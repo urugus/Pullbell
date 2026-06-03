@@ -22,7 +22,10 @@ noise. The current implementation includes:
 - Keyboard navigation, PR preview, filtering, copy URL, local Done, and Undo.
 - GitHub notification thread actions where available, including mark done and
   mute.
-- Settings for sign-in/out, update checks, update install, and app actions.
+- Pullbell-local repository mute controls without changing GitHub Watch
+  settings.
+- Settings for sign-in/out, repository mutes, update checks, update install,
+  and app actions.
 - Desktop notifications for newly seen actionable PR items.
 - Token storage in macOS Keychain.
 - GitHub Release update checks, Homebrew Cask installation, and restart.
@@ -163,6 +166,10 @@ Leave the Raycast hotkey unset if you do not want a keyboard shortcut.
 - `u`: move the selected done pull request back to To do.
 - `m`: mute the selected GitHub notification thread.
 
+Repository mute controls are available from each pull request row and from
+Settings. Muted repositories are hidden from Pullbell lists and desktop
+notifications, but Pullbell does not change GitHub Watch or Ignore settings.
+
 ## Test
 
 ```sh
@@ -227,6 +234,6 @@ Completed MVP:
 
 Next phases:
 
-- Add user-configurable polling interval and repo/org filters.
+- Add user-configurable polling interval and org filters.
 - Persist more panel preferences across restarts.
 - Package as a notarized `.app` bundle.

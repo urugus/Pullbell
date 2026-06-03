@@ -1,4 +1,4 @@
-use crate::model::{AvailableUpdate, LocalDonePrs, PullRequestItem};
+use crate::model::{AppSettings, AvailableUpdate, LocalDonePrs, PullRequestItem};
 use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Default)]
@@ -17,6 +17,7 @@ pub struct AppState {
     pub pending_auth: Option<PendingAuth>,
     pub pull_requests: Vec<PullRequestItem>,
     pub local_done_prs: LocalDonePrs,
+    pub settings: AppSettings,
 }
 
 #[derive(Debug, Clone)]
