@@ -7,6 +7,12 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
+## 0.10.0
+
+- Added Pullbell-local repository mute controls so selected repositories can be
+  hidden from lists and desktop notifications without changing GitHub Watch or
+  Ignore settings.
+
 ## 0.9.6
 
 - Fixed PR notifications so notification click handling no longer spins
