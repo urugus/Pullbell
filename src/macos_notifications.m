@@ -49,6 +49,19 @@ static NSImage* pullbell_notification_icon(NSString* preferredIconPath) {
     return nil;
 }
 
+static void pullbell_set_notification_icon(NSUserNotification* notification, NSImage* icon) {
+    if (icon == nil) {
+        return;
+    }
+
+    @try {
+        [notification setValue:icon forKey:@"_identityImage"];
+        [notification setValue:@NO forKey:@"_identityImageHasBorder"];
+    } @catch (NSException* exception) {
+        // Private notification icon keys are best-effort and may be unavailable.
+    }
+}
+
 void pullbell_install_notification_delegate(void) {
     @autoreleasepool {
         if (pullbellNotificationDelegate == nil) {
@@ -88,11 +101,10 @@ bool pullbell_send_pr_notification(
         notification.informativeText = messageString;
         notification.userInfo = @{@"url": urlString};
         notification.hasActionButton = NO;
-        NSImage* icon = pullbell_notification_icon(iconPathString);
-        if (icon != nil) {
-            [notification setValue:icon forKey:@"_identityImage"];
-            [notification setValue:@NO forKey:@"_identityImageHasBorder"];
-        }
+        pullbell_set_notification_icon(
+            notification,
+            pullbell_notification_icon(iconPathString)
+        );
 
         [[NSUserNotificationCenter defaultUserNotificationCenter]
             deliverNotification:notification];
