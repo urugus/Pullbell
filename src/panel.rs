@@ -749,9 +749,20 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
   let previewOpen = false;
   let currentView = "notifications";
   let groupByRepository = false;
+  let pendingSelectionDoneCmd = null;
 
   function selectableRows() {{
     return Array.from(document.querySelectorAll("[data-selectable='true']"));
+  }}
+
+  function visibleRows() {{
+    return selectableRows().filter(function(row) {{ return !row.hidden; }});
+  }}
+
+  function visibleTodoRows() {{
+    return visibleRows().filter(function(row) {{
+      return !row.classList.contains("done") && row.dataset.doneCmd;
+    }});
   }}
 
   function clamp(index, count) {{
@@ -760,7 +771,7 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
   }}
 
   window.PullbellSelect = function(index, shouldFocus) {{
-    const rows = selectableRows().filter(function(row) {{ return !row.hidden; }});
+    const rows = visibleRows();
     selectedIndex = clamp(index, rows.length);
 
     selectableRows().forEach(function(row) {{
@@ -779,23 +790,52 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
   }};
 
   window.PullbellSelectElement = function(element) {{
-    const index = selectableRows().filter(function(row) {{ return !row.hidden; }}).indexOf(element);
+    const index = visibleRows().indexOf(element);
     if (index >= 0) window.PullbellSelect(index, false);
   }};
 
   window.PullbellActivateSelected = function() {{
-    const row = selectableRows().filter(function(row) {{ return !row.hidden; }})[selectedIndex];
+    const row = visibleRows()[selectedIndex];
     if (row && row.dataset.cmd) window.send(row.dataset.cmd);
   }};
 
   window.PullbellCopySelected = function() {{
-    const row = selectableRows().filter(function(row) {{ return !row.hidden; }})[selectedIndex];
+    const row = visibleRows()[selectedIndex];
     if (row && row.dataset.copyCmd) window.send(row.dataset.copyCmd);
   }};
 
+  function rememberSelectionAfterDone(row) {{
+    if (!row || row.classList.contains("done")) return;
+
+    const rows = visibleTodoRows();
+    const index = rows.indexOf(row);
+    if (index < 0) return;
+
+    const nextRow = rows[index + 1] || rows[index - 1];
+    pendingSelectionDoneCmd = nextRow ? nextRow.dataset.doneCmd : null;
+  }}
+
+  function restorePendingSelection() {{
+    if (!pendingSelectionDoneCmd) return false;
+
+    const command = pendingSelectionDoneCmd;
+    pendingSelectionDoneCmd = null;
+
+    const rows = visibleRows();
+    const index = rows.findIndex(function(row) {{
+      return row.dataset.doneCmd === command;
+    }});
+    if (index < 0) return false;
+
+    window.PullbellSelect(index, true);
+    return true;
+  }}
+
   window.PullbellActOnSelected = function(action) {{
-    const row = selectableRows().filter(function(row) {{ return !row.hidden; }})[selectedIndex];
+    const row = visibleRows()[selectedIndex];
     if (!row) return;
+
+    if (action === "done") rememberSelectionAfterDone(row);
 
     const command =
       action === "done" ? row.dataset.doneCmd :
@@ -806,7 +846,7 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
   }};
 
   window.PullbellShowPreview = function() {{
-    const row = selectableRows().filter(function(row) {{ return !row.hidden; }})[selectedIndex];
+    const row = visibleRows()[selectedIndex];
     const preview = document.getElementById("preview");
     if (!row || !preview) return;
 
@@ -896,6 +936,7 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
     window.PullbellApplyFilters();
     window.PullbellSetView(currentView);
     window.PullbellSyncGroupByRepository();
+    restorePendingSelection();
     if (previewOpen) window.PullbellShowPreview();
   }};
 
@@ -1719,6 +1760,9 @@ mod tests {
         assert!(markup.contains("window.PullbellCopySelected"));
         assert!(markup.contains("window.PullbellActOnSelected"));
         assert!(markup.contains("window.PullbellTogglePreview"));
+        assert!(markup.contains("rememberSelectionAfterDone"));
+        assert!(markup.contains("restorePendingSelection"));
+        assert!(markup.contains("pendingSelectionDoneCmd"));
         assert!(markup.contains("window.PullbellShowSettings"));
         assert!(markup.contains("window.PullbellShowNotifications"));
         assert!(markup.contains("window.PullbellToggleGroupByRepository"));
