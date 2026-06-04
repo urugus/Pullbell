@@ -749,9 +749,20 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
   let previewOpen = false;
   let currentView = "notifications";
   let groupByRepository = false;
+  let pendingSelectionDoneCmd = null;
 
   function selectableRows() {{
     return Array.from(document.querySelectorAll("[data-selectable='true']"));
+  }}
+
+  function visibleRows() {{
+    return selectableRows().filter(function(row) {{ return !row.hidden; }});
+  }}
+
+  function visibleTodoRows() {{
+    return visibleRows().filter(function(row) {{
+      return row.dataset.todoRow === "true";
+    }});
   }}
 
   function clamp(index, count) {{
@@ -760,7 +771,7 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
   }}
 
   window.PullbellSelect = function(index, shouldFocus) {{
-    const rows = selectableRows().filter(function(row) {{ return !row.hidden; }});
+    const rows = visibleRows();
     selectedIndex = clamp(index, rows.length);
 
     selectableRows().forEach(function(row) {{
@@ -779,23 +790,52 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
   }};
 
   window.PullbellSelectElement = function(element) {{
-    const index = selectableRows().filter(function(row) {{ return !row.hidden; }}).indexOf(element);
+    const index = visibleRows().indexOf(element);
     if (index >= 0) window.PullbellSelect(index, false);
   }};
 
   window.PullbellActivateSelected = function() {{
-    const row = selectableRows().filter(function(row) {{ return !row.hidden; }})[selectedIndex];
+    const row = visibleRows()[selectedIndex];
     if (row && row.dataset.cmd) window.send(row.dataset.cmd);
   }};
 
   window.PullbellCopySelected = function() {{
-    const row = selectableRows().filter(function(row) {{ return !row.hidden; }})[selectedIndex];
+    const row = visibleRows()[selectedIndex];
     if (row && row.dataset.copyCmd) window.send(row.dataset.copyCmd);
   }};
 
+  function rememberSelectionAfterDone(row) {{
+    if (!row || row.classList.contains("done")) return;
+
+    const rows = visibleTodoRows();
+    const index = rows.indexOf(row);
+    if (index < 0) return;
+
+    const nextRow = rows[index + 1] || rows[index - 1];
+    pendingSelectionDoneCmd = nextRow ? nextRow.dataset.doneCmd : null;
+  }}
+
+  function restorePendingSelection() {{
+    if (!pendingSelectionDoneCmd) return false;
+
+    const command = pendingSelectionDoneCmd;
+    pendingSelectionDoneCmd = null;
+
+    const rows = visibleRows();
+    const index = rows.findIndex(function(row) {{
+      return row.dataset.doneCmd === command;
+    }});
+    if (index < 0) return false;
+
+    window.PullbellSelect(index, currentView === "notifications");
+    return true;
+  }}
+
   window.PullbellActOnSelected = function(action) {{
-    const row = selectableRows().filter(function(row) {{ return !row.hidden; }})[selectedIndex];
+    const row = visibleRows()[selectedIndex];
     if (!row) return;
+
+    if (action === "done") rememberSelectionAfterDone(row);
 
     const command =
       action === "done" ? row.dataset.doneCmd :
@@ -806,7 +846,7 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
   }};
 
   window.PullbellShowPreview = function() {{
-    const row = selectableRows().filter(function(row) {{ return !row.hidden; }})[selectedIndex];
+    const row = visibleRows()[selectedIndex];
     const preview = document.getElementById("preview");
     if (!row || !preview) return;
 
@@ -896,6 +936,7 @@ window.send = function(message) {{ window.ipc.postMessage(message); }};
     window.PullbellApplyFilters();
     window.PullbellSetView(currentView);
     window.PullbellSyncGroupByRepository();
+    restorePendingSelection();
     if (previewOpen) window.PullbellShowPreview();
   }};
 
@@ -1383,6 +1424,11 @@ fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
     let badge_class = item_icon_class(item);
     let badge_icon = item_icon(item);
     let row_class = if item.locally_done { "row done" } else { "row" };
+    let todo_attr = if item.is_todo() {
+        r#" data-todo-row="true""#
+    } else {
+        ""
+    };
     let repo = short_repo_name(&item.repo);
     let age = item
         .updated_at
@@ -1408,7 +1454,7 @@ fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
     let copy_command = format!("copy-url:{}", item.url);
 
     format!(
-        r#"<div class="{}" data-selectable="true" data-cmd="{}" data-copy-cmd="{}" data-mute-repo-cmd="{}" data-repo="{}" data-reason="{}" data-author="{}" data-preview-title="{}" data-preview-meta="{}" data-preview-body="{}"{}{}{} tabindex="-1" aria-selected="false" onfocusin="window.PullbellSelectElement(this)"><button class="row-open" type="button" tabindex="-1" data-row-shortcut="true" data-cmd="{}" onclick="send(this.dataset.cmd)"><div class="badge {}" title="{}" aria-label="{}">{}</div><div class="row-main"><div class="meta"><span class="repo">{}</span><span class="dot"></span><span>#{}</span><span class="dot"></span><span>{}</span></div><div class="title">{}</div></div></button><button class="row-copy row-action" type="button" title="Copy PR URL" aria-label="Copy PR URL" data-cmd="{}" onclick="event.stopPropagation(); send(this.dataset.cmd)">{}</button><button class="row-repo-mute row-action" type="button" title="Mute repository in Pullbell" aria-label="Mute repository in Pullbell" data-cmd="{}" onclick="event.stopPropagation(); send(this.dataset.cmd)">{}</button><div class="age">{}</div></div>"#,
+        r#"<div class="{}" data-selectable="true" data-cmd="{}" data-copy-cmd="{}" data-mute-repo-cmd="{}" data-repo="{}" data-reason="{}" data-author="{}" data-preview-title="{}" data-preview-meta="{}" data-preview-body="{}"{}{}{}{} tabindex="-1" aria-selected="false" onfocusin="window.PullbellSelectElement(this)"><button class="row-open" type="button" tabindex="-1" data-row-shortcut="true" data-cmd="{}" onclick="send(this.dataset.cmd)"><div class="badge {}" title="{}" aria-label="{}">{}</div><div class="row-main"><div class="meta"><span class="repo">{}</span><span class="dot"></span><span>#{}</span><span class="dot"></span><span>{}</span></div><div class="title">{}</div></div></button><button class="row-copy row-action" type="button" title="Copy PR URL" aria-label="Copy PR URL" data-cmd="{}" onclick="event.stopPropagation(); send(this.dataset.cmd)">{}</button><button class="row-repo-mute row-action" type="button" title="Mute repository in Pullbell" aria-label="Mute repository in Pullbell" data-cmd="{}" onclick="event.stopPropagation(); send(this.dataset.cmd)">{}</button><div class="age">{}</div></div>"#,
         row_class,
         escape_attr(&command),
         escape_attr(&copy_command),
@@ -1422,6 +1468,7 @@ fn render_item(item: &PullRequestItem, now: DateTime<Utc>) -> String {
         done_attr,
         undo_attr,
         mute_attr,
+        todo_attr,
         escape_attr(&command),
         badge_class,
         escape_attr(label),
@@ -1719,6 +1766,17 @@ mod tests {
         assert!(markup.contains("window.PullbellCopySelected"));
         assert!(markup.contains("window.PullbellActOnSelected"));
         assert!(markup.contains("window.PullbellTogglePreview"));
+        assert!(markup.contains("rememberSelectionAfterDone"));
+        assert!(markup.contains("restorePendingSelection"));
+        assert!(markup.contains("pendingSelectionDoneCmd"));
+        assert!(
+            markup.contains("row.dataset.todoRow === &quot;true&quot;")
+                || markup.contains(r#"row.dataset.todoRow === "true""#)
+        );
+        assert!(
+            markup.contains("currentView === &quot;notifications&quot;")
+                || markup.contains(r#"currentView === "notifications""#)
+        );
         assert!(markup.contains("window.PullbellShowSettings"));
         assert!(markup.contains("window.PullbellShowNotifications"));
         assert!(markup.contains("window.PullbellToggleGroupByRepository"));
@@ -1978,6 +2036,32 @@ mod tests {
 
         assert!(row.contains("data-done-cmd=\"done-pr:owner/repo#42\""));
         assert!(!row.contains("data-mute-cmd"));
+    }
+
+    #[test]
+    fn renders_todo_rows_for_done_selection_restore() {
+        let review_row = render_item(
+            &item(PrKind::ReviewRequested),
+            Utc.timestamp_opt(7_200, 0).unwrap(),
+        );
+        let notification_row =
+            render_item(&notification_item(), Utc.timestamp_opt(7_200, 0).unwrap());
+        let authored_row = render_item(
+            &item(PrKind::Authored),
+            Utc.timestamp_opt(7_200, 0).unwrap(),
+        );
+        let locally_done_row = render_item(
+            &PullRequestItem {
+                locally_done: true,
+                ..item(PrKind::ReviewRequested)
+            },
+            Utc.timestamp_opt(7_200, 0).unwrap(),
+        );
+
+        assert!(review_row.contains("data-todo-row=\"true\""));
+        assert!(notification_row.contains("data-todo-row=\"true\""));
+        assert!(!authored_row.contains("data-todo-row=\"true\""));
+        assert!(!locally_done_row.contains("data-todo-row=\"true\""));
     }
 
     #[test]
