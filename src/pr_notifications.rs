@@ -10,6 +10,7 @@ unsafe extern "C" {
         subtitle: *const std::ffi::c_char,
         message: *const std::ffi::c_char,
         url: *const std::ffi::c_char,
+        icon_path: *const std::ffi::c_char,
     ) -> bool;
 }
 
@@ -27,11 +28,18 @@ pub(super) fn send(item: &PullRequestItem) -> Result<()> {
         .with_context(|| format!("building notification message for {}", item.id))?;
     let url = CString::new(item.url.as_str())
         .with_context(|| format!("building notification URL for {}", item.id))?;
+    let icon_path = CString::new(crate::notification_icon_path().unwrap_or_default())?;
 
-    send_raw(&title, &subtitle, &message, &url)
+    send_raw(&title, &subtitle, &message, &url, &icon_path)
 }
 
-fn send_raw(title: &CString, subtitle: &CString, message: &CString, url: &CString) -> Result<()> {
+fn send_raw(
+    title: &CString,
+    subtitle: &CString,
+    message: &CString,
+    url: &CString,
+    icon_path: &CString,
+) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         let delivered = unsafe {
@@ -40,6 +48,7 @@ fn send_raw(title: &CString, subtitle: &CString, message: &CString, url: &CStrin
                 subtitle.as_ptr(),
                 message.as_ptr(),
                 url.as_ptr(),
+                icon_path.as_ptr(),
             )
         };
 
@@ -52,7 +61,7 @@ fn send_raw(title: &CString, subtitle: &CString, message: &CString, url: &CStrin
 
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (title, subtitle, message, url);
+        let _ = (title, subtitle, message, url, icon_path);
         Ok(())
     }
 }

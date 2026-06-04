@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
-use mac_notification_sys::send_notification;
+use mac_notification_sys::{Notification, send_notification};
 use pullbell::auth::OAuthDeviceClient;
 use pullbell::github::GitHubClient;
 use pullbell::model::{
@@ -11,6 +11,7 @@ use pullbell::state::{AppState, PendingAuth};
 use pullbell::storage;
 use pullbell::updater;
 use std::fs;
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -301,6 +302,22 @@ fn send_pr_notification(item: PullRequestItem) {
     if let Err(error) = pr_notifications::send(&item) {
         eprintln!("failed to deliver PR notification: {error:#}");
     }
+}
+
+fn notification_icon_path() -> Option<String> {
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Some(contents_dir) = exe_path.parent().and_then(|macos_dir| macos_dir.parent())
+    {
+        let bundled_icon = contents_dir.join("Resources").join("Pullbell.icns");
+        if bundled_icon.is_file() {
+            return Some(bundled_icon.to_string_lossy().into_owned());
+        }
+    }
+
+    let repo_icon = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/pullbell-app-icon.icns");
+    repo_icon
+        .is_file()
+        .then(|| repo_icon.to_string_lossy().into_owned())
 }
 
 #[cfg(test)]
@@ -765,11 +782,19 @@ async fn sign_in(
         ));
     }
     let _ = proxy.send_event(AppEvent::StateChanged);
+    let icon_path = notification_icon_path();
+    let mut notification_options = Notification::new();
+    let notification_options = if let Some(icon_path) = icon_path.as_deref() {
+        notification_options.app_icon(icon_path);
+        Some(&notification_options)
+    } else {
+        None
+    };
     let _ = send_notification(
         "Pullbell GitHub Sign-in",
         Some(&format!("Code {}", code.user_code)),
         "Enter this code on the GitHub device authorization page. It was copied to the clipboard.",
-        None,
+        notification_options,
     );
     pr_notifications::install_delegate();
     let _ = open::that(&code.verification_uri);
