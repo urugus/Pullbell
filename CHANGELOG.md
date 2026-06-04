@@ -7,6 +7,11 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
+## 0.10.2
+
+- Fixed repeated Done shortcut handling so selection stays on actionable To do
+  rows after a pull request is marked Done.
+
 ## 0.10.1
 
 - Updated the menu bar icon so macOS can tint it for the current appearance.
