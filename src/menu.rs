@@ -17,7 +17,7 @@ pub(super) fn update_tray(tray: &mut TrayIcon, state: &Arc<Mutex<AppState>>) -> 
 pub(super) fn build_tray() -> Result<TrayIcon> {
     TrayIconBuilder::new()
         .with_icon(build_icon()?)
-        .with_icon_as_template(false)
+        .with_icon_as_template(true)
         .with_title("PR")
         .with_tooltip("Pullbell")
         .build()

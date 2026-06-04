@@ -1,0 +1,20 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Pullbell menu bar mark</title>
+  <desc id="desc">A white bell outline with a pull request branch, download arrow, and red notification dot.</desc>
+
+  <path d="M256 380V430" stroke="#FFFFFF" stroke-width="25" stroke-linecap="round"/>
+  <path d="M207 420C218 446 235 459 256 459C277 459 294 446 305 420" stroke="#FFFFFF" stroke-width="25" stroke-linecap="round"/>
+
+  <path d="M120 337C162 317 174 285 174 232C174 172 209 130 241 124V91C241 69 253 56 256 56C259 56 271 69 271 91V124C291 128 310 139 325 155" stroke="#FFFFFF" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M350 201C356 218 358 238 358 262C358 301 370 322 392 337" stroke="#FFFFFF" stroke-width="25" stroke-linecap="round"/>
+  <path d="M120 337C92 350 87 400 128 400H384C425 400 420 350 392 337" stroke="#FFFFFF" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <path d="M224 210V298" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round"/>
+  <path d="M190 298H258L224 352L190 298Z" fill="#FFFFFF"/>
+  <circle cx="224" cy="176" r="22" fill="none" stroke="#FFFFFF" stroke-width="20"/>
+  <path d="M246 184C264 184 263 207 283 207" stroke="#FFFFFF" stroke-width="20" stroke-linecap="round"/>
+  <circle cx="300" cy="221" r="20" fill="none" stroke="#FFFFFF" stroke-width="20"/>
+
+  <circle cx="358" cy="167" r="36" fill="#F03D3E"/>
+  <circle cx="358" cy="167" r="36" stroke="#FFFFFF" stroke-width="10"/>
+</svg>
