@@ -7,6 +7,11 @@ format and must match the version in `Cargo.toml`.
 
 ## Unreleased
 
+## 0.10.1
+
+- Updated the menu bar icon so macOS can tint it for the current appearance.
+- Added Pullbell app icons to PR and GitHub sign-in desktop notifications.
+
 ## 0.10.0
 
 - Added Pullbell-local repository mute controls so selected repositories can be
